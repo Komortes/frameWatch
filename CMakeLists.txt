@@ -4,6 +4,7 @@ project(FrameWatchMini VERSION 0.1.0 LANGUAGES CXX)
 
 option(FRAMEWATCH_ENABLE_DX11_HOOK "Build the DX11 hook scaffold on Windows" ON)
 option(FRAMEWATCH_BUILD_DEMO "Build the CLI MVP demo" ON)
+option(FRAMEWATCH_BUILD_DEBUG_WINDOW "Build the SDL2 debug window if SDL2 is available" ON)
 option(FRAMEWATCH_BUILD_TESTS "Build unit tests" ON)
 
 add_library(framewatch_core
@@ -39,6 +40,48 @@ if(FRAMEWATCH_BUILD_DEMO)
     add_executable(framewatch_demo src/app/main.cpp)
     target_link_libraries(framewatch_demo PRIVATE framewatch_core)
     target_compile_features(framewatch_demo PRIVATE cxx_std_20)
+endif()
+
+set(FRAMEWATCH_SDL2_TARGET "")
+
+if(FRAMEWATCH_BUILD_DEBUG_WINDOW)
+    find_package(SDL2 CONFIG QUIET)
+
+    if(TARGET SDL2::SDL2)
+        set(FRAMEWATCH_SDL2_TARGET SDL2::SDL2)
+        message(STATUS "FrameWatch: using SDL2 package target")
+    else()
+        find_path(FRAMEWATCH_SDL2_INCLUDE_DIR
+            NAMES SDL.h
+            PATH_SUFFIXES SDL2
+            HINTS
+                /opt/homebrew/include
+                /usr/local/include
+        )
+        find_library(FRAMEWATCH_SDL2_LIBRARY
+            NAMES SDL2
+            HINTS
+                /opt/homebrew/lib
+                /usr/local/lib
+        )
+
+        if(FRAMEWATCH_SDL2_INCLUDE_DIR AND FRAMEWATCH_SDL2_LIBRARY)
+            add_library(framewatch_sdl2 INTERFACE)
+            target_include_directories(framewatch_sdl2 INTERFACE ${FRAMEWATCH_SDL2_INCLUDE_DIR})
+            target_link_libraries(framewatch_sdl2 INTERFACE ${FRAMEWATCH_SDL2_LIBRARY})
+            add_library(FrameWatch::SDL2 ALIAS framewatch_sdl2)
+            set(FRAMEWATCH_SDL2_TARGET FrameWatch::SDL2)
+            message(STATUS "FrameWatch: using SDL2 from ${FRAMEWATCH_SDL2_LIBRARY}")
+        endif()
+    endif()
+
+    if(FRAMEWATCH_SDL2_TARGET)
+        add_executable(framewatch_debug_window src/app/debug_window_main.cpp)
+        target_link_libraries(framewatch_debug_window PRIVATE framewatch_core ${FRAMEWATCH_SDL2_TARGET})
+        target_compile_features(framewatch_debug_window PRIVATE cxx_std_20)
+    else()
+        message(STATUS "FrameWatch: SDL2 not found, skipping framewatch_debug_window target")
+    endif()
 endif()
 
 include(CTest)

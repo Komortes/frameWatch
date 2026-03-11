@@ -68,6 +68,34 @@ Optional flags:
 --json <path>
 ```
 
+## Debug Window
+
+If `SDL2` is available on the machine, CMake also builds `framewatch_debug_window`.
+
+Run it with:
+
+```bash
+./build/framewatch_debug_window
+```
+
+Controls:
+
+- `Space`: pause or resume the synthetic benchmark
+- `R`: reset the session
+- `E`: export the current session
+- `Esc`: quit
+
+Exports are written to:
+
+- `output/framewatch_debug_window.csv`
+- `output/framewatch_debug_window.json`
+
+For a non-GUI verification run:
+
+```bash
+./build/framewatch_debug_window --smoke-test
+```
+
 ## Next implementation steps
 
 - wire `IDXGISwapChain::Present` detouring through MinHook
