@@ -14,9 +14,14 @@ class UnsupportedPresentHook final : public PresentHook {
         return "Present hook is only scaffolded; enable the Windows DX11 backend to implement detouring.";
     }
 
+    void SetPresentCallback(PresentCallback callback) override { callback_ = std::move(callback); }
+
     bool Install() override { return false; }
 
     void Remove() noexcept override {}
+
+  private:
+    PresentCallback callback_;
 };
 
 }  // namespace

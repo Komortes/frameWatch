@@ -1,7 +1,10 @@
 #pragma once
 
+#include <functional>
 #include <memory>
 #include <string_view>
+
+#include "framewatch/core/frametime_tracker.h"
 
 namespace framewatch {
 
@@ -18,6 +21,8 @@ enum class HookState {
     Error,
 };
 
+using PresentCallback = std::function<void(FrameClock::time_point)>;
+
 class PresentHook {
   public:
     virtual ~PresentHook() = default;
@@ -26,6 +31,7 @@ class PresentHook {
     virtual HookState State() const noexcept = 0;
     virtual std::string_view Description() const noexcept = 0;
 
+    virtual void SetPresentCallback(PresentCallback callback) = 0;
     virtual bool Install() = 0;
     virtual void Remove() noexcept = 0;
 };

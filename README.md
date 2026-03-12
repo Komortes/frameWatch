@@ -111,7 +111,7 @@ Targeting helpers:
 
 ## Next implementation steps
 
-- wire `IDXGISwapChain::Present` detouring through MinHook
-- bootstrap Dear ImGui with a transparent DX11 overlay window
-- add benchmark controls and runtime overlay settings
-- add DX12/Vulkan backends behind the same interfaces
+- wire `IDXGISwapChain::Present` detouring through MinHook into `PerformanceSession` / `OverlayRuntime`
+- replace `NullOverlayRenderer` with a real DX11 overlay renderer
+- add runtime overlay settings and target-window aware positioning on Windows
+- add DX12/Vulkan backends behind the same session/runtime interfaces

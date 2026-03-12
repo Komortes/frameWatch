@@ -16,6 +16,7 @@ add_library(framewatch_core
     src/exporter/json_exporter.cpp
     src/hooks/present_hook.cpp
     src/overlay/overlay_model.cpp
+    src/overlay/overlay_runtime.cpp
     src/overlay/overlay_renderer_stub.cpp
 )
 

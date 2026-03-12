@@ -16,6 +16,8 @@ class Dx11PresentHookWin final : public PresentHook {
         return "DX11 hook scaffold compiled. Replace this stub with a MinHook Present detour.";
     }
 
+    void SetPresentCallback(PresentCallback callback) override { callback_ = std::move(callback); }
+
     bool Install() override {
         state_ = HookState::Error;
         return false;
@@ -25,6 +27,7 @@ class Dx11PresentHookWin final : public PresentHook {
 
   private:
     HookState state_{HookState::Ready};
+    PresentCallback callback_;
 };
 
 }  // namespace

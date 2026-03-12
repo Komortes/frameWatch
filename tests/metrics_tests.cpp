@@ -5,6 +5,7 @@
 
 #include "framewatch/core/frametime_tracker.h"
 #include "framewatch/core/metrics_engine.h"
+#include "framewatch/overlay/overlay_runtime.h"
 #include "framewatch/session/performance_session.h"
 
 namespace {
@@ -36,6 +37,27 @@ framewatch::FrameSample MakeSample(std::uint64_t frame_index,
     sample.fps = 1'000.0 / frametime_ms;
     return sample;
 }
+
+class RecordingOverlayRenderer final : public framewatch::OverlayRenderer {
+  public:
+    const char* Name() const noexcept override { return "RecordingOverlayRenderer"; }
+
+    bool Initialize() override {
+        initialized = true;
+        return true;
+    }
+
+    void Render(const framewatch::OverlaySnapshot& snapshot) override {
+        ++render_calls;
+        last_snapshot = snapshot;
+    }
+
+    void Shutdown() noexcept override { initialized = false; }
+
+    bool initialized{false};
+    int render_calls{0};
+    framewatch::OverlaySnapshot last_snapshot;
+};
 
 bool TestFrametimeTracker() {
     framewatch::FrametimeTracker tracker;
@@ -136,6 +158,49 @@ bool TestPerformanceSessionBenchmarkLifecycle() {
     return ok;
 }
 
+bool TestOverlayRuntimePresentFlow() {
+    auto renderer = std::make_unique<RecordingOverlayRenderer>();
+    RecordingOverlayRenderer* renderer_ptr = renderer.get();
+
+    framewatch::OverlayRuntime runtime(std::move(renderer), 128, 128);
+
+    bool ok = true;
+    ok &= Expect(runtime.Initialize(), "overlay runtime should initialize the renderer");
+
+    auto timestamp = framewatch::FrameClock::time_point{};
+    ok &= Expect(!runtime.OnPresent(timestamp),
+                 "first present should only prime frametime tracking");
+
+    timestamp += std::chrono::milliseconds(16);
+    ok &= Expect(runtime.OnPresent(timestamp),
+                 "second present should produce an overlay snapshot");
+    ok &= Expect(renderer_ptr->render_calls == 1,
+                 "overlay renderer should receive the rendered snapshot");
+    ok &= Expect(runtime.LastSnapshot() != nullptr,
+                 "overlay runtime should keep the last snapshot");
+    ok &= Expect(runtime.Session().LiveSampleCount() == 1,
+                 "overlay runtime should feed the shared performance session");
+
+    runtime.StartBenchmark();
+    timestamp += std::chrono::milliseconds(16);
+    runtime.OnPresent(timestamp);
+    const framewatch::BenchmarkSummary active = runtime.Session().CurrentBenchmark();
+    ok &= Expect(active.active, "runtime benchmark control should start a recording");
+    ok &= Expect(active.frame_count == 1,
+                 "benchmark should count frames captured after StartBenchmark");
+
+    runtime.StopBenchmark();
+    const framewatch::BenchmarkSummary stopped = runtime.Session().CurrentBenchmark();
+    ok &= Expect(!stopped.active, "runtime benchmark control should stop the recording");
+    ok &= Expect(stopped.frame_count == 1,
+                 "stopped benchmark should retain the last captured frame count");
+
+    runtime.Shutdown();
+    ok &= Expect(!runtime.IsInitialized(), "runtime should report shutdown state");
+    ok &= Expect(!renderer_ptr->initialized, "renderer shutdown should be called");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -144,6 +209,7 @@ int main() {
     ok &= TestStableMetrics();
     ok &= TestRollingHistoryLimit();
     ok &= TestPerformanceSessionBenchmarkLifecycle();
+    ok &= TestOverlayRuntimePresentFlow();
 
     if (!ok) {
         return EXIT_FAILURE;
