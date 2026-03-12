@@ -11,6 +11,7 @@ add_library(framewatch_core
     src/core/frametime_tracker.cpp
     src/core/metrics_engine.cpp
     src/core/session_logger.cpp
+    src/session/performance_session.cpp
     src/exporter/csv_exporter.cpp
     src/exporter/json_exporter.cpp
     src/hooks/present_hook.cpp
@@ -34,6 +35,14 @@ endif()
 if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)
     target_sources(framewatch_core PRIVATE src/hooks/dx11/dx11_present_hook_win.cpp)
     target_compile_definitions(framewatch_core PRIVATE FRAMEWATCH_HAS_DX11_HOOK=1)
+endif()
+
+if(APPLE)
+    find_library(FRAMEWATCH_APPLICATION_SERVICES_FRAMEWORK ApplicationServices REQUIRED)
+    target_sources(framewatch_core PRIVATE src/platform/window_targeting_macos.cpp)
+    target_link_libraries(framewatch_core PRIVATE ${FRAMEWATCH_APPLICATION_SERVICES_FRAMEWORK})
+else()
+    target_sources(framewatch_core PRIVATE src/platform/window_targeting_stub.cpp)
 endif()
 
 if(FRAMEWATCH_BUILD_DEMO)

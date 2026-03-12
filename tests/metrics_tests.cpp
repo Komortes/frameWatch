@@ -5,6 +5,7 @@
 
 #include "framewatch/core/frametime_tracker.h"
 #include "framewatch/core/metrics_engine.h"
+#include "framewatch/session/performance_session.h"
 
 namespace {
 
@@ -99,6 +100,42 @@ bool TestRollingHistoryLimit() {
     return ok;
 }
 
+bool TestPerformanceSessionBenchmarkLifecycle() {
+    framewatch::PerformanceSession session(256, 256);
+    session.ResetSyntheticTimeline();
+
+    for (int i = 0; i < 30; ++i) {
+        session.CaptureSyntheticFrame(16.666667);
+    }
+
+    session.StartBenchmark();
+    for (int i = 0; i < 90; ++i) {
+        session.CaptureSyntheticFrame(16.666667);
+    }
+
+    framewatch::BenchmarkSummary active = session.CurrentBenchmark();
+
+    bool ok = true;
+    ok &= Expect(active.active, "benchmark should report active after StartBenchmark");
+    ok &= Expect(active.has_data, "benchmark should collect samples while recording");
+    ok &= Expect(active.frame_count == 90, "benchmark should count only benchmark frames");
+    ok &= ExpectNear(active.duration_seconds,
+                     1.5,
+                     0.02,
+                     "benchmark duration should sum frametimes");
+
+    session.StopBenchmark();
+    const framewatch::BenchmarkSummary stopped = session.CurrentBenchmark();
+
+    ok &= Expect(!stopped.active, "benchmark should stop after StopBenchmark");
+    ok &= Expect(stopped.frame_count == 90, "stopped benchmark should retain the last run");
+    ok &= ExpectNear(stopped.metrics.average_fps,
+                     60.0,
+                     0.05,
+                     "benchmark average fps should remain stable");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -106,6 +143,7 @@ int main() {
     ok &= TestFrametimeTracker();
     ok &= TestStableMetrics();
     ok &= TestRollingHistoryLimit();
+    ok &= TestPerformanceSessionBenchmarkLifecycle();
 
     if (!ok) {
         return EXIT_FAILURE;

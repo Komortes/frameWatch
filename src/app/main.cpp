@@ -11,12 +11,10 @@
 #include <string_view>
 #include <vector>
 
-#include "framewatch/core/frametime_tracker.h"
-#include "framewatch/core/metrics_engine.h"
-#include "framewatch/core/session_logger.h"
 #include "framewatch/hooks/present_hook.h"
 #include "framewatch/overlay/overlay_model.h"
 #include "framewatch/overlay/overlay_renderer.h"
+#include "framewatch/session/performance_session.h"
 
 namespace {
 
@@ -125,10 +123,7 @@ void PrintAsciiGraph(std::span<const double> frametimes) {
 int main(int argc, char** argv) {
     const DemoOptions options = ParseArgs(argc, argv);
 
-    framewatch::FrametimeTracker tracker;
-    framewatch::MetricsEngine metrics(300);
-    framewatch::SessionLogger logger;
-    framewatch::OverlayModel overlay_model;
+    framewatch::PerformanceSession session(300);
     std::unique_ptr<framewatch::PresentHook> hook = framewatch::CreatePresentHook();
     std::unique_ptr<framewatch::OverlayRenderer> renderer =
         framewatch::CreateOverlayRenderer();
@@ -136,8 +131,7 @@ int main(int argc, char** argv) {
     std::mt19937 rng(42);
     std::normal_distribution<double> baseline_frametime_ms(16.6, 0.35);
 
-    auto timestamp = framewatch::FrameClock::time_point{};
-    tracker.Capture(timestamp);
+    session.ResetSyntheticTimeline();
 
     for (int i = 0; i < options.frames; ++i) {
         double frametime_ms = std::max(5.0, baseline_frametime_ms(rng));
@@ -150,26 +144,22 @@ int main(int argc, char** argv) {
             frametime_ms += 16.0;
         }
 
-        timestamp += std::chrono::microseconds(
-            static_cast<long long>(std::llround(frametime_ms * 1'000.0)));
-
-        if (auto sample = tracker.Capture(timestamp)) {
-            metrics.PushSample(*sample);
-            logger.Append(*sample);
-        }
+        session.CaptureSyntheticFrame(frametime_ms);
     }
 
-    const framewatch::MetricsSnapshot snapshot = metrics.Snapshot();
-    const std::vector<double> history = metrics.RecentFrametimeHistory();
-    const framewatch::OverlaySnapshot overlay_snapshot =
-        overlay_model.Build(snapshot, history);
+    const framewatch::MetricsSnapshot snapshot = session.LiveMetrics();
+    const framewatch::OverlaySnapshot overlay_snapshot = session.GraphSnapshot();
+    std::vector<double> history;
+    history.reserve(overlay_snapshot.graph.size());
+    for (const framewatch::OverlayGraphPoint& point : overlay_snapshot.graph) {
+        history.push_back(point.frametime_ms);
+    }
 
     renderer->Initialize();
     renderer->Render(overlay_snapshot);
     renderer->Shutdown();
 
-    const bool csv_exported = logger.ExportCsv(options.csv_path);
-    const bool json_exported = logger.ExportJson(options.json_path);
+    const bool exported = session.ExportPreferred(options.csv_path, options.json_path);
 
     std::cout << "FrameWatch Mini MVP demo\n";
     std::cout << "Hook backend: " << HookBackendName(hook->Backend()) << '\n';
@@ -179,11 +169,11 @@ int main(int argc, char** argv) {
     PrintMetrics(snapshot);
     PrintAsciiGraph(history);
 
-    std::cout << "\nSamples captured: " << logger.Size() << '\n';
-    std::cout << "CSV export: " << (csv_exported ? "ok" : "failed")
+    std::cout << "\nSamples captured: " << session.LiveSampleCount() << '\n';
+    std::cout << "CSV export: " << (exported ? "ok" : "failed")
               << " -> " << options.csv_path.string() << '\n';
-    std::cout << "JSON export: " << (json_exported ? "ok" : "failed")
+    std::cout << "JSON export: " << (exported ? "ok" : "failed")
               << " -> " << options.json_path.string() << '\n';
 
-    return (csv_exported && json_exported) ? EXIT_SUCCESS : EXIT_FAILURE;
+    return exported ? EXIT_SUCCESS : EXIT_FAILURE;
 }

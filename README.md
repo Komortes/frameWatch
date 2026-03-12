@@ -81,8 +81,13 @@ Run it with:
 Controls:
 
 - `Space`: pause or resume the synthetic benchmark
+- `B`: start or stop benchmark recording
 - `R`: reset the session
 - `E`: export the current session
+- `Tab` / `Shift+Tab`: cycle detected desktop windows
+- `G`: lock onto the current frontmost target window
+- `F`: follow the selected target window
+- `N`: clear the selected target
 - `Esc`: quit
 
 Exports are written to:
@@ -94,6 +99,14 @@ For a non-GUI verification run:
 
 ```bash
 ./build/framewatch_debug_window --smoke-test
+```
+
+Targeting helpers:
+
+```bash
+./build/framewatch_debug_window --list-targets
+./build/framewatch_debug_window --target-title "Safari"
+./build/framewatch_debug_window --target-title "Safari" --follow-target
 ```
 
 ## Next implementation steps

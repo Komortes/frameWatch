@@ -1,4 +1,6 @@
 /build/
+/build_verify/
+/build_verify2/
 /output/
 /.idea/
 /.vscode/
