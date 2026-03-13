@@ -14,8 +14,10 @@ add_library(framewatch_core
     src/session/performance_session.cpp
     src/exporter/csv_exporter.cpp
     src/exporter/json_exporter.cpp
+    src/hooks/hook_overlay_service.cpp
     src/hooks/present_hook.cpp
     src/overlay/overlay_model.cpp
+    src/overlay/overlay_settings.cpp
     src/overlay/overlay_runtime.cpp
     src/overlay/overlay_renderer_stub.cpp
 )
@@ -34,8 +36,14 @@ else()
 endif()
 
 if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)
-    target_sources(framewatch_core PRIVATE src/hooks/dx11/dx11_present_hook_win.cpp)
-    target_compile_definitions(framewatch_core PRIVATE FRAMEWATCH_HAS_DX11_HOOK=1)
+    target_sources(framewatch_core PRIVATE
+        src/hooks/dx11/dx11_present_hook_win.cpp
+        src/overlay/dx11/dx11_overlay_renderer_win.cpp
+    )
+    target_compile_definitions(framewatch_core PRIVATE
+        FRAMEWATCH_HAS_DX11_HOOK=1
+        FRAMEWATCH_HAS_DX11_OVERLAY=1
+    )
 endif()
 
 if(APPLE)

@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "framewatch/overlay/overlay_settings.h"
 #include "framewatch/platform/window_targeting.h"
 #include "framewatch/session/performance_session.h"
 
@@ -337,6 +338,18 @@ std::string FormatDouble(double value, int precision) {
     return stream.str();
 }
 
+std::uint8_t ScaleAlpha(std::uint8_t alpha, double opacity) {
+    return static_cast<std::uint8_t>(
+        std::clamp(std::lround(static_cast<double>(alpha) * opacity), 28L, 255L));
+}
+
+Palette ApplyOverlaySettings(const Palette& base, const framewatch::OverlaySettings& settings) {
+    Palette adjusted = base;
+    adjusted.panel.a = ScaleAlpha(base.panel.a, settings.panel_opacity);
+    adjusted.panel_border.a = ScaleAlpha(base.panel_border.a, settings.panel_opacity);
+    return adjusted;
+}
+
 void SetStatus(WindowState& state, std::string message, std::chrono::seconds ttl) {
     state.status_text = std::move(message);
     state.status_until = SteadyClock::now() + ttl;
@@ -431,7 +444,9 @@ std::optional<framewatch::DesktopWindowInfo> CurrentTarget(const TargetingState&
     return targeting.windows[static_cast<std::size_t>(targeting.selected_index)];
 }
 
-void DockWindowToTarget(SDL_Window* window, const framewatch::DesktopWindowInfo& target) {
+void DockWindowToTarget(SDL_Window* window,
+                        const framewatch::DesktopWindowInfo& target,
+                        const framewatch::OverlaySettings& settings) {
     int window_width = 0;
     int window_height = 0;
     SDL_GetWindowSize(window, &window_width, &window_height);
@@ -439,14 +454,27 @@ void DockWindowToTarget(SDL_Window* window, const framewatch::DesktopWindowInfo&
     SDL_Rect usable_bounds{};
     SDL_GetDisplayUsableBounds(0, &usable_bounds);
 
-    int x = target.x + target.width + 18;
-    if (x + window_width > usable_bounds.x + usable_bounds.w) {
+    const bool prefer_right =
+        settings.dock_anchor == framewatch::OverlayDockAnchor::RightTop ||
+        settings.dock_anchor == framewatch::OverlayDockAnchor::RightBottom;
+    const bool align_bottom =
+        settings.dock_anchor == framewatch::OverlayDockAnchor::RightBottom ||
+        settings.dock_anchor == framewatch::OverlayDockAnchor::LeftBottom;
+
+    int x = prefer_right ? target.x + target.width + 18 : target.x - window_width - 18;
+    if (prefer_right && x + window_width > usable_bounds.x + usable_bounds.w) {
         x = target.x - window_width - 18;
+    } else if (!prefer_right && x < usable_bounds.x) {
+        x = target.x + target.width + 18;
     }
 
     x = std::clamp(x, usable_bounds.x, usable_bounds.x + usable_bounds.w - window_width);
-    const int y =
-        std::clamp(target.y, usable_bounds.y, usable_bounds.y + usable_bounds.h - window_height);
+
+    const int preferred_y =
+        align_bottom ? target.y + target.height - window_height : target.y;
+    const int y = std::clamp(preferred_y,
+                             usable_bounds.y,
+                             usable_bounds.y + usable_bounds.h - window_height);
 
     SDL_SetWindowPosition(window, x, y);
 }
@@ -689,7 +717,8 @@ void DrawSidebar(SDL_Renderer* renderer,
                  const SDL_Rect& rect,
                  const Palette& palette,
                  const framewatch::BenchmarkSummary& benchmark,
-                 const TargetingState& targeting) {
+                 const TargetingState& targeting,
+                 const framewatch::OverlaySettings& settings) {
     const int gap = 16;
     const int panel_height = (rect.h - gap) / 2;
     const SDL_Rect benchmark_rect{rect.x, rect.y, rect.w, panel_height};
@@ -713,6 +742,10 @@ void DrawSidebar(SDL_Renderer* renderer,
     } else {
         const auto current = CurrentTarget(targeting);
         target_lines.push_back(std::string("FOLLOW ") + (targeting.follow_enabled ? "ON" : "OFF"));
+        target_lines.push_back(std::string("DOCK ") +
+                               std::string(framewatch::OverlayDockAnchorName(settings.dock_anchor)));
+        target_lines.push_back(std::string("OPACITY ") +
+                               std::to_string(static_cast<int>(std::lround(settings.panel_opacity * 100.0))) + "%");
         target_lines.push_back(std::string("QUERY ") +
                                (targeting.title_query.empty() ? "AUTO" : SanitizeUiText(targeting.title_query, 22)));
         target_lines.push_back(std::string("VISIBLE ") + std::to_string(targeting.windows.size()));
@@ -726,8 +759,11 @@ void DrawSidebar(SDL_Renderer* renderer,
         } else {
             target_lines.push_back("NO TARGET SELECTED");
         }
+        target_lines.push_back(std::string("GRAPH ") + (settings.show_graph ? "ON" : "OFF") +
+                               "  SIDEBAR " + (settings.show_sidebar ? "ON" : "OFF"));
         target_lines.push_back("TAB NEXT  SHIFT+TAB PREV");
         target_lines.push_back("G FRONTMOST  F FOLLOW  N CLEAR");
+        target_lines.push_back("C DOCK  [ ] OPACITY  V/I TOGGLE");
     }
     DrawInfoPanel(renderer, target_rect, palette, palette.accent, "TARGET WINDOW", target_lines);
 }
@@ -746,7 +782,7 @@ void DrawFooter(SDL_Renderer* renderer,
              rect.y + 6,
              1,
              palette.text_muted,
-             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  TAB CYCLE  SHIFT+TAB BACK\nG FRONT  F FOLLOW  N CLEAR  ESC QUIT");
+             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  TAB CYCLE  SHIFT+TAB BACK\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  ESC QUIT");
 
     const SDL_Color status_color =
         (state.status_until > SteadyClock::now()) ? palette.accent : palette.text_muted;
@@ -856,6 +892,7 @@ int RunWindow(const AppOptions& options) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     Palette palette;
+    framewatch::OverlaySettings overlay_settings;
     framewatch::PerformanceSession benchmark;
     benchmark.ResetSyntheticTimeline();
     SyntheticFrameGenerator generator;
@@ -932,6 +969,46 @@ int RunWindow(const AppOptions& options) {
                         targeting.selected_index = -1;
                         SetStatus(state, "TARGET CLEARED", std::chrono::seconds(2));
                         break;
+                    case SDLK_c:
+                        overlay_settings.dock_anchor =
+                            framewatch::CycleOverlayDockAnchor(overlay_settings.dock_anchor);
+                        SetStatus(state,
+                                  std::string("DOCK ") +
+                                      std::string(framewatch::OverlayDockAnchorName(
+                                          overlay_settings.dock_anchor)),
+                                  std::chrono::seconds(2));
+                        break;
+                    case SDLK_LEFTBRACKET:
+                        framewatch::AdjustOverlayOpacity(overlay_settings, -0.10);
+                        SetStatus(state,
+                                  std::string("OPACITY ") +
+                                      std::to_string(static_cast<int>(std::lround(
+                                          overlay_settings.panel_opacity * 100.0))) +
+                                      "%",
+                                  std::chrono::seconds(2));
+                        break;
+                    case SDLK_RIGHTBRACKET:
+                        framewatch::AdjustOverlayOpacity(overlay_settings, 0.10);
+                        SetStatus(state,
+                                  std::string("OPACITY ") +
+                                      std::to_string(static_cast<int>(std::lround(
+                                          overlay_settings.panel_opacity * 100.0))) +
+                                      "%",
+                                  std::chrono::seconds(2));
+                        break;
+                    case SDLK_v:
+                        overlay_settings.show_graph = !overlay_settings.show_graph;
+                        SetStatus(state,
+                                  overlay_settings.show_graph ? "GRAPH VISIBLE" : "GRAPH HIDDEN",
+                                  std::chrono::seconds(2));
+                        break;
+                    case SDLK_i:
+                        overlay_settings.show_sidebar = !overlay_settings.show_sidebar;
+                        SetStatus(state,
+                                  overlay_settings.show_sidebar ? "SIDEBAR VISIBLE"
+                                                                : "SIDEBAR HIDDEN",
+                                  std::chrono::seconds(2));
+                        break;
                     default:
                         break;
                 }
@@ -952,7 +1029,7 @@ int RunWindow(const AppOptions& options) {
         if (targeting.follow_enabled &&
             (now - state.last_follow_sync_at) >= std::chrono::milliseconds(500)) {
             if (const auto target = CurrentTarget(targeting)) {
-                DockWindowToTarget(window, *target);
+                DockWindowToTarget(window, *target, overlay_settings);
             }
             state.last_follow_sync_at = now;
         }
@@ -969,16 +1046,51 @@ int RunWindow(const AppOptions& options) {
         int height = 0;
         SDL_GetRendererOutputSize(renderer, &width, &height);
 
+        const Palette runtime_palette = ApplyOverlaySettings(palette, overlay_settings);
         const auto graph_snapshot = benchmark.GraphSnapshot();
-        const SDL_Rect graph_rect{24, 364, std::max(320, width - 344), std::max(180, height - 458)};
-        const SDL_Rect sidebar_rect{width - 296, 364, 272, std::max(180, height - 458)};
+        const int sidebar_width = overlay_settings.show_sidebar ? 272 : 0;
+        const int graph_width =
+            overlay_settings.show_sidebar ? width - 344 : width - 48;
+        const SDL_Rect graph_rect{24, 364, std::max(320, graph_width), std::max(180, height - 458)};
+        const SDL_Rect sidebar_rect{width - 296, 364, sidebar_width, std::max(180, height - 458)};
 
-        DrawGradientBackground(renderer, width, height, palette.background_top, palette.background_bottom);
-        DrawHeader(renderer, width, palette, state, benchmark_summary, targeting);
-        DrawStatsGrid(renderer, width, palette, live_metrics, benchmark_summary, targeting);
-        DrawGraph(renderer, graph_rect, palette, graph_snapshot, benchmark.GraphLabel());
-        DrawSidebar(renderer, sidebar_rect, palette, benchmark_summary, targeting);
-        DrawFooter(renderer, width, height, palette, state);
+        DrawGradientBackground(renderer,
+                               width,
+                               height,
+                               runtime_palette.background_top,
+                               runtime_palette.background_bottom);
+        DrawHeader(renderer, width, runtime_palette, state, benchmark_summary, targeting);
+        DrawStatsGrid(renderer, width, runtime_palette, live_metrics, benchmark_summary, targeting);
+        if (overlay_settings.show_graph) {
+            DrawGraph(renderer, graph_rect, runtime_palette, graph_snapshot, benchmark.GraphLabel());
+        } else {
+            const std::vector<std::string> overlay_lines{
+                "GRAPH HIDDEN",
+                std::string("DOCK ") +
+                    std::string(framewatch::OverlayDockAnchorName(overlay_settings.dock_anchor)),
+                std::string("OPACITY ") +
+                    std::to_string(static_cast<int>(std::lround(
+                        overlay_settings.panel_opacity * 100.0))) +
+                    "%",
+                std::string("SIDEBAR ") + (overlay_settings.show_sidebar ? "ON" : "OFF"),
+                "PRESS V TO SHOW GRAPH",
+            };
+            DrawInfoPanel(renderer,
+                          graph_rect,
+                          runtime_palette,
+                          runtime_palette.accent_2,
+                          "OVERLAY SETTINGS",
+                          overlay_lines);
+        }
+        if (overlay_settings.show_sidebar) {
+            DrawSidebar(renderer,
+                        sidebar_rect,
+                        runtime_palette,
+                        benchmark_summary,
+                        targeting,
+                        overlay_settings);
+        }
+        DrawFooter(renderer, width, height, runtime_palette, state);
 
         SDL_RenderPresent(renderer);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));

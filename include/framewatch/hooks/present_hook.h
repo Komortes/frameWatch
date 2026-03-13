@@ -4,7 +4,7 @@
 #include <memory>
 #include <string_view>
 
-#include "framewatch/core/frametime_tracker.h"
+#include "framewatch/core/present_event.h"
 
 namespace framewatch {
 
@@ -21,7 +21,7 @@ enum class HookState {
     Error,
 };
 
-using PresentCallback = std::function<void(FrameClock::time_point)>;
+using PresentCallback = std::function<void(const PresentEvent&)>;
 
 class PresentHook {
   public:

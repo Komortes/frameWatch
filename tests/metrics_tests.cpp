@@ -1,10 +1,13 @@
 #include <cmath>
+#include <cstdint>
 #include <cstdlib>
 #include <iostream>
 #include <string_view>
 
 #include "framewatch/core/frametime_tracker.h"
 #include "framewatch/core/metrics_engine.h"
+#include "framewatch/hooks/hook_overlay_service.h"
+#include "framewatch/overlay/overlay_settings.h"
 #include "framewatch/overlay/overlay_runtime.h"
 #include "framewatch/session/performance_session.h"
 
@@ -42,14 +45,20 @@ class RecordingOverlayRenderer final : public framewatch::OverlayRenderer {
   public:
     const char* Name() const noexcept override { return "RecordingOverlayRenderer"; }
 
+    std::string_view Description() const noexcept override {
+        return "Recording overlay renderer for tests";
+    }
+
     bool Initialize() override {
         initialized = true;
         return true;
     }
 
-    void Render(const framewatch::OverlaySnapshot& snapshot) override {
+    void Render(const framewatch::OverlaySnapshot& snapshot,
+                const framewatch::PresentEvent& present_event) override {
         ++render_calls;
         last_snapshot = snapshot;
+        last_present = present_event;
     }
 
     void Shutdown() noexcept override { initialized = false; }
@@ -57,6 +66,57 @@ class RecordingOverlayRenderer final : public framewatch::OverlayRenderer {
     bool initialized{false};
     int render_calls{0};
     framewatch::OverlaySnapshot last_snapshot;
+    framewatch::PresentEvent last_present;
+};
+
+class RecordingPresentHook final : public framewatch::PresentHook {
+  public:
+    framewatch::HookBackend Backend() const noexcept override {
+        return framewatch::HookBackend::Dx11;
+    }
+
+    framewatch::HookState State() const noexcept override { return state_; }
+
+    std::string_view Description() const noexcept override {
+        return "RecordingPresentHook for tests";
+    }
+
+    void SetPresentCallback(framewatch::PresentCallback callback) override {
+        callback_ = std::move(callback);
+        callback_was_set = true;
+    }
+
+    bool Install() override {
+        state_ = install_result ? framewatch::HookState::Running : framewatch::HookState::Error;
+        install_was_called = true;
+        return install_result;
+    }
+
+    void Remove() noexcept override {
+        remove_was_called = true;
+        state_ = framewatch::HookState::Ready;
+    }
+
+    void Emit(const framewatch::PresentEvent& present_event) {
+        if (callback_) {
+            callback_(present_event);
+        }
+    }
+
+    void Emit(framewatch::FrameClock::time_point timestamp) {
+        framewatch::PresentEvent present_event;
+        present_event.timestamp = timestamp;
+        Emit(present_event);
+    }
+
+    bool install_result{true};
+    bool callback_was_set{false};
+    bool install_was_called{false};
+    bool remove_was_called{false};
+
+  private:
+    framewatch::HookState state_{framewatch::HookState::Ready};
+    framewatch::PresentCallback callback_;
 };
 
 bool TestFrametimeTracker() {
@@ -167,12 +227,21 @@ bool TestOverlayRuntimePresentFlow() {
     bool ok = true;
     ok &= Expect(runtime.Initialize(), "overlay runtime should initialize the renderer");
 
+    constexpr std::uintptr_t kSwapChainTag = 0x1234;
     auto timestamp = framewatch::FrameClock::time_point{};
-    ok &= Expect(!runtime.OnPresent(timestamp),
+    framewatch::PresentEvent first_present;
+    first_present.api = framewatch::GraphicsApi::Dx11;
+    first_present.timestamp = timestamp;
+    first_present.native_swap_chain = reinterpret_cast<void*>(kSwapChainTag);
+    first_present.sync_interval = 1;
+
+    ok &= Expect(!runtime.OnPresent(first_present),
                  "first present should only prime frametime tracking");
 
-    timestamp += std::chrono::milliseconds(16);
-    ok &= Expect(runtime.OnPresent(timestamp),
+    framewatch::PresentEvent second_present = first_present;
+    second_present.timestamp += std::chrono::milliseconds(16);
+
+    ok &= Expect(runtime.OnPresent(second_present),
                  "second present should produce an overlay snapshot");
     ok &= Expect(renderer_ptr->render_calls == 1,
                  "overlay renderer should receive the rendered snapshot");
@@ -180,10 +249,14 @@ bool TestOverlayRuntimePresentFlow() {
                  "overlay runtime should keep the last snapshot");
     ok &= Expect(runtime.Session().LiveSampleCount() == 1,
                  "overlay runtime should feed the shared performance session");
+    ok &= Expect(renderer_ptr->last_present.native_swap_chain ==
+                     reinterpret_cast<void*>(kSwapChainTag),
+                 "overlay runtime should forward native present context to the renderer");
 
     runtime.StartBenchmark();
-    timestamp += std::chrono::milliseconds(16);
-    runtime.OnPresent(timestamp);
+    framewatch::PresentEvent third_present = second_present;
+    third_present.timestamp += std::chrono::milliseconds(16);
+    runtime.OnPresent(third_present);
     const framewatch::BenchmarkSummary active = runtime.Session().CurrentBenchmark();
     ok &= Expect(active.active, "runtime benchmark control should start a recording");
     ok &= Expect(active.frame_count == 1,
@@ -201,6 +274,77 @@ bool TestOverlayRuntimePresentFlow() {
     return ok;
 }
 
+bool TestOverlaySettingsControls() {
+    framewatch::OverlaySettings settings;
+
+    bool ok = true;
+    ok &= ExpectNear(framewatch::ClampOverlayOpacity(0.15),
+                     0.35,
+                     0.0001,
+                     "overlay opacity should clamp to the minimum");
+    ok &= ExpectNear(framewatch::ClampOverlayOpacity(1.5),
+                     1.0,
+                     0.0001,
+                     "overlay opacity should clamp to the maximum");
+
+    framewatch::AdjustOverlayOpacity(settings, -0.75);
+    ok &= ExpectNear(settings.panel_opacity,
+                     0.35,
+                     0.0001,
+                     "opacity adjustment should respect the lower bound");
+
+    settings.dock_anchor = framewatch::OverlayDockAnchor::LeftBottom;
+    settings.dock_anchor = framewatch::CycleOverlayDockAnchor(settings.dock_anchor);
+    ok &= Expect(settings.dock_anchor == framewatch::OverlayDockAnchor::RightTop,
+                 "dock anchor cycling should wrap to the first anchor");
+    ok &= Expect(framewatch::OverlayDockAnchorName(framewatch::OverlayDockAnchor::RightBottom) ==
+                     std::string_view("RIGHT BOTTOM"),
+                 "dock anchor naming should stay stable");
+    return ok;
+}
+
+bool TestHookOverlayServiceWiring() {
+    auto hook = std::make_unique<RecordingPresentHook>();
+    RecordingPresentHook* hook_ptr = hook.get();
+
+    auto renderer = std::make_unique<RecordingOverlayRenderer>();
+    RecordingOverlayRenderer* renderer_ptr = renderer.get();
+
+    framewatch::HookOverlayService service(std::move(hook), std::move(renderer), 128, 128);
+
+    bool ok = true;
+    ok &= Expect(service.Initialize(), "hook overlay service should initialize");
+    ok &= Expect(service.IsInitialized(), "service should report initialized state");
+    ok &= Expect(hook_ptr->callback_was_set, "service should register a present callback");
+    ok &= Expect(hook_ptr->install_was_called, "service should install the present hook");
+
+    constexpr std::uintptr_t kSwapChainTag = 0xCAFE;
+    auto timestamp = framewatch::FrameClock::time_point{};
+    framewatch::PresentEvent first_present;
+    first_present.api = framewatch::GraphicsApi::Dx11;
+    first_present.timestamp = timestamp;
+    first_present.native_swap_chain = reinterpret_cast<void*>(kSwapChainTag);
+
+    framewatch::PresentEvent second_present = first_present;
+    second_present.timestamp += std::chrono::milliseconds(16);
+
+    hook_ptr->Emit(first_present);
+    hook_ptr->Emit(second_present);
+
+    ok &= Expect(renderer_ptr->render_calls == 1,
+                 "present callback should flow into overlay rendering");
+    ok &= Expect(service.Runtime().Session().LiveSampleCount() == 1,
+                 "hook overlay service should feed the runtime session");
+    ok &= Expect(renderer_ptr->last_present.native_swap_chain ==
+                     reinterpret_cast<void*>(kSwapChainTag),
+                 "hook overlay service should preserve native present context");
+
+    service.Shutdown();
+    ok &= Expect(hook_ptr->remove_was_called, "service shutdown should remove the hook");
+    ok &= Expect(!service.IsInitialized(), "service should report shutdown state");
+    return ok;
+}
+
 }  // namespace
 
 int main() {
@@ -210,6 +354,8 @@ int main() {
     ok &= TestRollingHistoryLimit();
     ok &= TestPerformanceSessionBenchmarkLifecycle();
     ok &= TestOverlayRuntimePresentFlow();
+    ok &= TestOverlaySettingsControls();
+    ok &= TestHookOverlayServiceWiring();
 
     if (!ok) {
         return EXIT_FAILURE;

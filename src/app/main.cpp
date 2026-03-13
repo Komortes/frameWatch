@@ -11,10 +11,8 @@
 #include <string_view>
 #include <vector>
 
-#include "framewatch/hooks/present_hook.h"
+#include "framewatch/hooks/hook_overlay_service.h"
 #include "framewatch/overlay/overlay_model.h"
-#include "framewatch/overlay/overlay_renderer.h"
-#include "framewatch/session/performance_session.h"
 
 namespace {
 
@@ -123,10 +121,9 @@ void PrintAsciiGraph(std::span<const double> frametimes) {
 int main(int argc, char** argv) {
     const DemoOptions options = ParseArgs(argc, argv);
 
-    framewatch::PerformanceSession session(300);
-    std::unique_ptr<framewatch::PresentHook> hook = framewatch::CreatePresentHook();
-    std::unique_ptr<framewatch::OverlayRenderer> renderer =
-        framewatch::CreateOverlayRenderer();
+    std::unique_ptr<framewatch::HookOverlayService> service =
+        framewatch::CreateHookOverlayService(300);
+    framewatch::PerformanceSession& session = service->Runtime().Session();
 
     std::mt19937 rng(42);
     std::normal_distribution<double> baseline_frametime_ms(16.6, 0.35);
@@ -155,16 +152,13 @@ int main(int argc, char** argv) {
         history.push_back(point.frametime_ms);
     }
 
-    renderer->Initialize();
-    renderer->Render(overlay_snapshot);
-    renderer->Shutdown();
-
     const bool exported = session.ExportPreferred(options.csv_path, options.json_path);
 
     std::cout << "FrameWatch Mini MVP demo\n";
-    std::cout << "Hook backend: " << HookBackendName(hook->Backend()) << '\n';
-    std::cout << "Hook status: " << hook->Description() << '\n';
-    std::cout << "Overlay renderer: " << renderer->Name() << "\n\n";
+    std::cout << "Hook backend: " << HookBackendName(service->HookBackendType()) << '\n';
+    std::cout << "Hook status: " << service->HookDescription() << '\n';
+    std::cout << "Overlay renderer: " << service->Runtime().RendererName() << '\n';
+    std::cout << "Renderer status: " << service->Runtime().RendererDescription() << "\n\n";
 
     PrintMetrics(snapshot);
     PrintAsciiGraph(history);

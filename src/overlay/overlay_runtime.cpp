@@ -28,19 +28,25 @@ bool OverlayRuntime::IsInitialized() const noexcept {
     return initialized_;
 }
 
-bool OverlayRuntime::OnPresent(FrameClock::time_point timestamp) {
+bool OverlayRuntime::OnPresent(const PresentEvent& present_event) {
     if (!initialized_) {
         return false;
     }
 
-    if (!session_.CaptureFrame(timestamp).has_value()) {
+    if (!session_.CaptureFrame(present_event.timestamp).has_value()) {
         return false;
     }
 
     last_snapshot_ = session_.GraphSnapshot();
-    renderer_->Render(last_snapshot_);
+    renderer_->Render(last_snapshot_, present_event);
     has_snapshot_ = true;
     return true;
+}
+
+bool OverlayRuntime::OnPresent(FrameClock::time_point timestamp) {
+    PresentEvent present_event;
+    present_event.timestamp = timestamp;
+    return OnPresent(present_event);
 }
 
 void OverlayRuntime::StartBenchmark() {
@@ -69,6 +75,10 @@ const OverlaySnapshot* OverlayRuntime::LastSnapshot() const noexcept {
 
 const char* OverlayRuntime::RendererName() const noexcept {
     return renderer_ ? renderer_->Name() : "NoOverlayRenderer";
+}
+
+std::string_view OverlayRuntime::RendererDescription() const noexcept {
+    return renderer_ ? renderer_->Description() : "No overlay renderer configured.";
 }
 
 }  // namespace framewatch

@@ -16,7 +16,8 @@ The core pipeline is already working end-to-end:
 1. capture frame intervals
 2. update rolling metrics
 3. build overlay-ready graph data
-4. persist benchmark sessions to CSV/JSON
+4. propagate `Present` metadata through the hook/runtime/renderer path
+5. persist benchmark sessions to CSV/JSON
 
 The actual DX11 `Present` detour and Dear ImGui renderer are intentionally left as platform integration points.
 That keeps the repository buildable today while preserving the architecture needed for the real overlay/hook implementation.
@@ -84,6 +85,10 @@ Controls:
 - `B`: start or stop benchmark recording
 - `R`: reset the session
 - `E`: export the current session
+- `C`: cycle target dock anchor (`right-top`, `right-bottom`, `left-top`, `left-bottom`)
+- `[` / `]`: decrease or increase overlay panel opacity
+- `V`: toggle the frametime graph
+- `I`: toggle the sidebar panels
 - `Tab` / `Shift+Tab`: cycle detected desktop windows
 - `G`: lock onto the current frontmost target window
 - `F`: follow the selected target window
@@ -111,7 +116,7 @@ Targeting helpers:
 
 ## Next implementation steps
 
-- wire `IDXGISwapChain::Present` detouring through MinHook into `PerformanceSession` / `OverlayRuntime`
-- replace `NullOverlayRenderer` with a real DX11 overlay renderer
+- implement the real DX11 `Present` detour behind `PresentHook` and feed live `IDXGISwapChain*` into `PresentEvent`
+- bind `Dx11OverlayRendererWin` to swap chain/device resources and replace the no-op render path with actual draw calls
 - add runtime overlay settings and target-window aware positioning on Windows
 - add DX12/Vulkan backends behind the same session/runtime interfaces

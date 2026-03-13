@@ -17,6 +17,7 @@ class OverlayRuntime {
     void Shutdown() noexcept;
     bool IsInitialized() const noexcept;
 
+    bool OnPresent(const PresentEvent& present_event);
     bool OnPresent(FrameClock::time_point timestamp = FrameClock::now());
 
     void StartBenchmark();
@@ -28,6 +29,7 @@ class OverlayRuntime {
 
     const OverlaySnapshot* LastSnapshot() const noexcept;
     const char* RendererName() const noexcept;
+    std::string_view RendererDescription() const noexcept;
 
   private:
     std::unique_ptr<OverlayRenderer> renderer_;
