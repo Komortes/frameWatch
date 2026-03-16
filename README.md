@@ -89,6 +89,7 @@ Controls:
 - `[` / `]`: decrease or increase overlay panel opacity
 - `V`: toggle the frametime graph
 - `I`: toggle the sidebar panels
+- `D`: reset overlay settings to defaults
 - `Tab` / `Shift+Tab`: cycle detected desktop windows
 - `G`: lock onto the current frontmost target window
 - `F`: follow the selected target window
@@ -99,6 +100,13 @@ Exports are written to:
 
 - `output/framewatch_debug_window.csv`
 - `output/framewatch_debug_window.json`
+- `output/framewatch_debug_window_settings.json`
+
+The settings JSON keeps the current overlay layout and target-window restore state:
+- graph/sidebar visibility
+- panel opacity and dock anchor
+- follow-target mode
+- last selected target query
 
 For a non-GUI verification run:
 
@@ -112,6 +120,7 @@ Targeting helpers:
 ./build/framewatch_debug_window --list-targets
 ./build/framewatch_debug_window --target-title "Safari"
 ./build/framewatch_debug_window --target-title "Safari" --follow-target
+./build/framewatch_debug_window --settings output/custom_overlay_settings.json
 ```
 
 ## Next implementation steps

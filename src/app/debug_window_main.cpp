@@ -38,6 +38,7 @@ struct AppOptions {
     std::string target_title;
     std::filesystem::path csv_path{"output/framewatch_debug_window.csv"};
     std::filesystem::path json_path{"output/framewatch_debug_window.json"};
+    std::filesystem::path settings_path{"output/framewatch_debug_window_settings.json"};
 };
 
 struct Palette {
@@ -115,6 +116,8 @@ AppOptions ParseArgs(int argc, char** argv) {
             options.csv_path = argv[++i];
         } else if (arg == "--json" && (i + 1) < argc) {
             options.json_path = argv[++i];
+        } else if (arg == "--settings" && (i + 1) < argc) {
+            options.settings_path = argv[++i];
         }
     }
 
@@ -365,6 +368,13 @@ std::string TargetLabel(const framewatch::DesktopWindowInfo& window) {
         return owner;
     }
     return owner + "/" + title;
+}
+
+std::string TargetQueryForPersistence(const framewatch::DesktopWindowInfo& window) {
+    if (!window.title.empty()) {
+        return window.title;
+    }
+    return window.owner_name;
 }
 
 bool IsSelfWindow(const framewatch::DesktopWindowInfo& window, std::string_view marker) {
@@ -764,6 +774,7 @@ void DrawSidebar(SDL_Renderer* renderer,
         target_lines.push_back("TAB NEXT  SHIFT+TAB PREV");
         target_lines.push_back("G FRONTMOST  F FOLLOW  N CLEAR");
         target_lines.push_back("C DOCK  [ ] OPACITY  V/I TOGGLE");
+        target_lines.push_back("D RESET  JSON AUTO-SAVE");
     }
     DrawInfoPanel(renderer, target_rect, palette, palette.accent, "TARGET WINDOW", target_lines);
 }
@@ -782,7 +793,7 @@ void DrawFooter(SDL_Renderer* renderer,
              rect.y + 6,
              1,
              palette.text_muted,
-             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  TAB CYCLE  SHIFT+TAB BACK\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  ESC QUIT");
+             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  TAB CYCLE  SHIFT+TAB BACK\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  D DEFAULTS  ESC QUIT");
 
     const SDL_Color status_color =
         (state.status_until > SteadyClock::now()) ? palette.accent : palette.text_muted;
@@ -893,20 +904,36 @@ int RunWindow(const AppOptions& options) {
 
     Palette palette;
     framewatch::OverlaySettings overlay_settings;
+    if (const auto loaded_settings = framewatch::LoadOverlaySettings(options.settings_path)) {
+        overlay_settings = *loaded_settings;
+    }
     framewatch::PerformanceSession benchmark;
     benchmark.ResetSyntheticTimeline();
     SyntheticFrameGenerator generator;
     WindowState state;
     TargetingState targeting;
-    targeting.follow_enabled = options.follow_target;
-    targeting.title_query = options.target_title;
+    targeting.follow_enabled =
+        options.follow_target || overlay_settings.follow_target_window;
+    targeting.title_query = !options.target_title.empty() ? options.target_title
+                                                          : overlay_settings.target_window_query;
 
     RefreshTargets(targeting, kSelfTitleMarker);
     if (!targeting.title_query.empty() && !CurrentTarget(targeting).has_value()) {
         SetStatus(state, "TARGET QUERY NOT FOUND", std::chrono::seconds(3));
     } else if (targeting.follow_enabled && !CurrentTarget(targeting).has_value()) {
         PickFrontmostTarget(targeting, kSelfTitleMarker);
+        if (const auto target = CurrentTarget(targeting)) {
+            targeting.title_query = TargetQueryForPersistence(*target);
+        }
     }
+
+    auto persist_overlay_settings = [&]() {
+        overlay_settings.follow_target_window = targeting.follow_enabled;
+        overlay_settings.target_window_query = targeting.title_query;
+        if (!framewatch::SaveOverlaySettings(overlay_settings, options.settings_path)) {
+            SetStatus(state, "SETTINGS SAVE FAILED", std::chrono::seconds(3));
+        }
+    };
 
     while (!state.quit) {
         SDL_Event event;
@@ -947,27 +974,38 @@ int RunWindow(const AppOptions& options) {
                     case SDLK_TAB:
                         RefreshTargets(targeting, kSelfTitleMarker);
                         CycleTarget(targeting, shift_held ? -1 : 1);
+                        if (const auto target = CurrentTarget(targeting)) {
+                            targeting.title_query = TargetQueryForPersistence(*target);
+                        }
                         SetStatus(state,
                                   CurrentTarget(targeting).has_value() ? "TARGET CHANGED"
                                                                        : "NO TARGET AVAILABLE",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_g:
                         PickFrontmostTarget(targeting, kSelfTitleMarker);
+                        if (const auto target = CurrentTarget(targeting)) {
+                            targeting.title_query = TargetQueryForPersistence(*target);
+                        }
                         SetStatus(state,
                                   CurrentTarget(targeting).has_value() ? "FRONTMOST TARGET LOCKED"
                                                                        : "NO TARGET FOUND",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_f:
                         targeting.follow_enabled = !targeting.follow_enabled;
                         SetStatus(state,
                                   targeting.follow_enabled ? "FOLLOW TARGET ON" : "FOLLOW TARGET OFF",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_n:
                         targeting.selected_index = -1;
+                        targeting.title_query.clear();
                         SetStatus(state, "TARGET CLEARED", std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_c:
                         overlay_settings.dock_anchor =
@@ -977,6 +1015,7 @@ int RunWindow(const AppOptions& options) {
                                       std::string(framewatch::OverlayDockAnchorName(
                                           overlay_settings.dock_anchor)),
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_LEFTBRACKET:
                         framewatch::AdjustOverlayOpacity(overlay_settings, -0.10);
@@ -986,6 +1025,7 @@ int RunWindow(const AppOptions& options) {
                                           overlay_settings.panel_opacity * 100.0))) +
                                       "%",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_RIGHTBRACKET:
                         framewatch::AdjustOverlayOpacity(overlay_settings, 0.10);
@@ -995,12 +1035,14 @@ int RunWindow(const AppOptions& options) {
                                           overlay_settings.panel_opacity * 100.0))) +
                                       "%",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_v:
                         overlay_settings.show_graph = !overlay_settings.show_graph;
                         SetStatus(state,
                                   overlay_settings.show_graph ? "GRAPH VISIBLE" : "GRAPH HIDDEN",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     case SDLK_i:
                         overlay_settings.show_sidebar = !overlay_settings.show_sidebar;
@@ -1008,6 +1050,15 @@ int RunWindow(const AppOptions& options) {
                                   overlay_settings.show_sidebar ? "SIDEBAR VISIBLE"
                                                                 : "SIDEBAR HIDDEN",
                                   std::chrono::seconds(2));
+                        persist_overlay_settings();
+                        break;
+                    case SDLK_d:
+                        overlay_settings = framewatch::OverlaySettings{};
+                        targeting.follow_enabled = overlay_settings.follow_target_window;
+                        targeting.title_query = overlay_settings.target_window_query;
+                        targeting.selected_index = -1;
+                        SetStatus(state, "SETTINGS RESET", std::chrono::seconds(2));
+                        persist_overlay_settings();
                         break;
                     default:
                         break;
@@ -1096,6 +1147,7 @@ int RunWindow(const AppOptions& options) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
+    persist_overlay_settings();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();

@@ -1,6 +1,7 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <filesystem>
 #include <iostream>
 #include <string_view>
 
@@ -303,6 +304,44 @@ bool TestOverlaySettingsControls() {
     return ok;
 }
 
+bool TestOverlaySettingsPersistence() {
+    framewatch::OverlaySettings settings;
+    settings.show_graph = false;
+    settings.show_sidebar = false;
+    settings.panel_opacity = 0.55;
+    settings.dock_anchor = framewatch::OverlayDockAnchor::LeftTop;
+    settings.follow_target_window = true;
+    settings.target_window_query = "Game \"Window\" \\\\ DX11";
+
+    const std::filesystem::path path =
+        std::filesystem::temp_directory_path() / "framewatch_overlay_settings_test.json";
+    std::filesystem::remove(path);
+
+    bool ok = true;
+    ok &= Expect(framewatch::SaveOverlaySettings(settings, path),
+                 "overlay settings should save to json");
+
+    const auto loaded = framewatch::LoadOverlaySettings(path);
+    ok &= Expect(loaded.has_value(), "overlay settings should load from json");
+    if (loaded.has_value()) {
+        ok &= Expect(!loaded->show_graph, "loaded settings should preserve show_graph");
+        ok &= Expect(!loaded->show_sidebar, "loaded settings should preserve show_sidebar");
+        ok &= ExpectNear(loaded->panel_opacity,
+                         0.55,
+                         0.0001,
+                         "loaded settings should preserve panel opacity");
+        ok &= Expect(loaded->dock_anchor == framewatch::OverlayDockAnchor::LeftTop,
+                     "loaded settings should preserve dock anchor");
+        ok &= Expect(loaded->follow_target_window,
+                     "loaded settings should preserve follow_target_window");
+        ok &= Expect(loaded->target_window_query == std::string("Game \"Window\" \\\\ DX11"),
+                     "loaded settings should preserve escaped target query");
+    }
+
+    std::filesystem::remove(path);
+    return ok;
+}
+
 bool TestHookOverlayServiceWiring() {
     auto hook = std::make_unique<RecordingPresentHook>();
     RecordingPresentHook* hook_ptr = hook.get();
@@ -355,6 +394,7 @@ int main() {
     ok &= TestPerformanceSessionBenchmarkLifecycle();
     ok &= TestOverlayRuntimePresentFlow();
     ok &= TestOverlaySettingsControls();
+    ok &= TestOverlaySettingsPersistence();
     ok &= TestHookOverlayServiceWiring();
 
     if (!ok) {
