@@ -1,15 +1,5 @@
 /build/
-/build_verify/
-/build_verify2/
-/build_verify3/
-/build_verify4/
-/build_verify5/
-/build_verify6/
-/build_verify7/
-/build_verify8/
-/build_verify9/
-/build_verify10/
-/build_verify11/
+/build_verify*/
 /output/
 /.idea/
 /.vscode/

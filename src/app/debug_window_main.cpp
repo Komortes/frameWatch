@@ -93,6 +93,7 @@ struct WindowState {
     bool quit{false};
     bool show_settings_panel{false};
     bool editing_target_query{false};
+    int target_list_start_index{0};
     std::string target_query_buffer;
     std::string status_text{"SIMULATION RUNNING"};
     SteadyClock::time_point status_until{};
@@ -122,11 +123,36 @@ struct SettingsPanelButton {
     bool accent{false};
 };
 
+struct SettingsPanelTargetRow {
+    SDL_Rect rect{};
+    int window_index{-1};
+};
+
 struct SettingsPanelLayout {
     SDL_Rect panel_rect{};
     SDL_Rect query_rect{};
+    SDL_Rect query_apply_rect{};
+    SDL_Rect query_clear_rect{};
+    SDL_Rect target_list_rect{};
+    SDL_Rect target_page_prev_rect{};
+    SDL_Rect target_page_next_rect{};
+    int visible_rows{0};
+    int first_visible_index{0};
+    bool has_prev_page{false};
+    bool has_next_page{false};
     std::vector<SettingsPanelButton> buttons;
+    std::vector<SettingsPanelTargetRow> target_rows;
 };
+
+constexpr int kSettingsPanelMargin = 16;
+constexpr int kSettingsMaxVisibleRows = 6;
+constexpr int kSettingsButtonGap = 6;
+constexpr int kSettingsButtonHeight = 24;
+constexpr int kSettingsButtonStartY = 84;
+constexpr int kSettingsTargetListHeaderHeight = 22;
+constexpr int kSettingsTargetRowStride = 22;
+constexpr int kSettingsInfoHeight = 54;
+constexpr int kSettingsBottomPadding = 16;
 
 AppOptions ParseArgs(int argc, char** argv) {
     AppOptions options;
@@ -828,6 +854,29 @@ bool PointInRect(int x, int y, const SDL_Rect& rect) {
     return x >= rect.x && y >= rect.y && x < (rect.x + rect.w) && y < (rect.y + rect.h);
 }
 
+int ComputeSettingsVisibleRows(int height) {
+    const int max_panel_height = std::max(320, height - (kSettingsPanelMargin * 2));
+    const int buttons_height = (kSettingsButtonHeight * 5) + (kSettingsButtonGap * 4);
+    const int target_list_y = kSettingsButtonStartY + buttons_height + 12;
+    const int reserved_height = target_list_y + kSettingsTargetListHeaderHeight + 12 +
+                                kSettingsInfoHeight + kSettingsBottomPadding;
+    return std::clamp((max_panel_height - reserved_height) / kSettingsTargetRowStride,
+                      1,
+                      kSettingsMaxVisibleRows);
+}
+
+int ClampTargetListStartIndex(const TargetingState& targeting,
+                              int visible_rows,
+                              int start_index) {
+    if (targeting.windows.empty()) {
+        return 0;
+    }
+
+    const int max_start =
+        std::max(0, static_cast<int>(targeting.windows.size()) - visible_rows);
+    return std::clamp(start_index, 0, max_start);
+}
+
 void DrawSettingsButton(SDL_Renderer* renderer,
                         const Palette& palette,
                         const SettingsPanelButton& button) {
@@ -844,17 +893,40 @@ void DrawSettingsButton(SDL_Renderer* renderer,
 SettingsPanelLayout BuildSettingsPanelLayout(int width,
                                              int height,
                                              const framewatch::OverlaySettings& settings,
-                                             const TargetingState& targeting) {
+                                             const TargetingState& targeting,
+                                             int target_list_start_index) {
     SettingsPanelLayout layout;
     const int panel_width = std::min(width - 72, 520);
-    const int panel_height = std::min(height - 120, 356);
-    layout.panel_rect = SDL_Rect{(width - panel_width) / 2, 112, panel_width, panel_height};
-    layout.query_rect = SDL_Rect{layout.panel_rect.x + 18, layout.panel_rect.y + 46, panel_width - 36, 34};
+    layout.visible_rows = ComputeSettingsVisibleRows(height);
+    const int buttons_height = (kSettingsButtonHeight * 5) + (kSettingsButtonGap * 4);
+    const int target_list_y = kSettingsButtonStartY + buttons_height + 12;
+    const int reserved_height = target_list_y + kSettingsTargetListHeaderHeight + 12 +
+                                kSettingsInfoHeight + kSettingsBottomPadding;
+    const int target_list_height =
+        kSettingsTargetListHeaderHeight + (layout.visible_rows * kSettingsTargetRowStride);
+    const int panel_height = reserved_height + (layout.visible_rows * kSettingsTargetRowStride);
+    const int panel_y = std::max(kSettingsPanelMargin, (height - panel_height) / 2);
 
-    const int button_gap = 10;
+    layout.panel_rect = SDL_Rect{(width - panel_width) / 2, panel_y, panel_width, panel_height};
+    const int query_actions_width = 72;
+    const int query_actions_gap = 8;
+    const int query_row_width = panel_width - 36;
+    const int query_input_width =
+        query_row_width - (query_actions_width * 2) - (query_actions_gap * 2);
+    layout.query_rect =
+        SDL_Rect{layout.panel_rect.x + 18, layout.panel_rect.y + 46, query_input_width, 34};
+    layout.query_apply_rect = SDL_Rect{layout.query_rect.x + layout.query_rect.w + query_actions_gap,
+                                       layout.query_rect.y,
+                                       query_actions_width,
+                                       34};
+    layout.query_clear_rect =
+        SDL_Rect{layout.query_apply_rect.x + query_actions_width + query_actions_gap,
+                 layout.query_rect.y,
+                 query_actions_width,
+                 34};
+
     const int button_width = (panel_width - 54) / 2;
-    const int button_height = 30;
-    const int button_start_y = layout.panel_rect.y + 96;
+    const int button_origin_y = layout.panel_rect.y + kSettingsButtonStartY;
 
     auto add_button = [&](int row,
                           int column,
@@ -862,10 +934,10 @@ SettingsPanelLayout BuildSettingsPanelLayout(int width,
                           std::string label,
                           bool accent = false) {
         layout.buttons.push_back(SettingsPanelButton{
-            SDL_Rect{layout.panel_rect.x + 18 + column * (button_width + button_gap),
-                     button_start_y + row * (button_height + button_gap),
+            SDL_Rect{layout.panel_rect.x + 18 + column * (button_width + kSettingsButtonGap),
+                     button_origin_y + row * (kSettingsButtonHeight + kSettingsButtonGap),
                      button_width,
-                     button_height},
+                     kSettingsButtonHeight},
             action,
             std::move(label),
             accent,
@@ -901,6 +973,56 @@ SettingsPanelLayout BuildSettingsPanelLayout(int width,
     add_button(4, 0, SettingsPanelAction::ClearTarget, "CLEAR TARGET");
     add_button(4, 1, SettingsPanelAction::ResetDefaults, "RESET DEFAULTS");
 
+    layout.target_list_rect = SDL_Rect{
+        layout.panel_rect.x + 18,
+        layout.panel_rect.y + target_list_y,
+        panel_width - 36,
+        target_list_height,
+    };
+    layout.target_page_prev_rect = SDL_Rect{
+        layout.target_list_rect.x + layout.target_list_rect.w - 54,
+        layout.target_list_rect.y + 4,
+        20,
+        14,
+    };
+    layout.target_page_next_rect = SDL_Rect{
+        layout.target_list_rect.x + layout.target_list_rect.w - 28,
+        layout.target_list_rect.y + 4,
+        20,
+        14,
+    };
+
+    if (!targeting.windows.empty()) {
+        layout.first_visible_index =
+            ClampTargetListStartIndex(targeting, layout.visible_rows, target_list_start_index);
+        const int max_start =
+            std::max(0, static_cast<int>(targeting.windows.size()) - layout.visible_rows);
+        layout.has_prev_page = layout.first_visible_index > 0;
+        layout.has_next_page = layout.first_visible_index < max_start;
+
+        for (int row = 0; row < layout.visible_rows; ++row) {
+            const int window_index = layout.first_visible_index + row;
+            if (window_index >= static_cast<int>(targeting.windows.size())) {
+                break;
+            }
+
+            layout.target_rows.push_back(SettingsPanelTargetRow{
+                SDL_Rect{
+                    layout.target_list_rect.x + 8,
+                    layout.target_list_rect.y + kSettingsTargetListHeaderHeight + 2 +
+                        row * kSettingsTargetRowStride,
+                    layout.target_list_rect.w - 16,
+                    kSettingsTargetRowStride - 4,
+                },
+                window_index,
+            });
+        }
+    } else {
+        layout.first_visible_index = 0;
+        layout.has_prev_page = false;
+        layout.has_next_page = false;
+    }
+
     return layout;
 }
 
@@ -918,7 +1040,8 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
                          int window_y) {
     FillRect(renderer, SDL_Rect{0, 0, width, height}, SDL_Color{4, 8, 14, 170});
 
-    const SettingsPanelLayout layout = BuildSettingsPanelLayout(width, height, settings, targeting);
+    const SettingsPanelLayout layout =
+        BuildSettingsPanelLayout(width, height, settings, targeting, state.target_list_start_index);
     FillRect(renderer, layout.panel_rect, palette.panel);
     DrawRect(renderer, layout.panel_rect, palette.panel_border);
     FillRect(renderer,
@@ -936,7 +1059,7 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
              layout.panel_rect.y + 16,
              1,
              palette.text_muted,
-             state.editing_target_query ? "ENTER APPLY  ESC CANCEL" : "CLICK QUERY OR PRESS T");
+             state.editing_target_query ? "ENTER APPLY  ESC CANCEL" : "QUERY / APPLY / CLEAR");
 
     FillRect(renderer,
              layout.query_rect,
@@ -952,12 +1075,100 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
                  : std::string("QUERY ") +
                        (targeting.title_query.empty() ? "NONE"
                                                       : SanitizeUiText(targeting.title_query, 38)));
+    DrawSettingsButton(renderer,
+                       palette,
+                       SettingsPanelButton{layout.query_apply_rect,
+                                           SettingsPanelAction::ToggleGraph,
+                                           "APPLY",
+                                           state.editing_target_query ||
+                                               !targeting.title_query.empty()});
+    DrawSettingsButton(renderer,
+                       palette,
+                       SettingsPanelButton{layout.query_clear_rect,
+                                           SettingsPanelAction::ClearTarget,
+                                           "CLEAR",
+                                           state.editing_target_query ||
+                                               !targeting.title_query.empty()});
 
     for (const SettingsPanelButton& button : layout.buttons) {
         DrawSettingsButton(renderer, palette, button);
     }
 
-    const int info_y = layout.panel_rect.y + 280;
+    FillRect(renderer, layout.target_list_rect, SDL_Color{12, 18, 26, 255});
+    DrawRect(renderer, layout.target_list_rect, palette.grid);
+    DrawText(renderer,
+             layout.target_list_rect.x + 10,
+             layout.target_list_rect.y + 7,
+             1,
+             palette.text_muted,
+             "VISIBLE WINDOWS");
+    FillRect(renderer,
+             layout.target_page_prev_rect,
+             layout.has_prev_page ? SDL_Color{18, 28, 40, 255} : SDL_Color{14, 20, 28, 180});
+    DrawRect(renderer,
+             layout.target_page_prev_rect,
+             layout.has_prev_page ? palette.accent_2 : palette.grid);
+    DrawText(renderer,
+             layout.target_page_prev_rect.x + 7,
+             layout.target_page_prev_rect.y + 4,
+             1,
+             layout.has_prev_page ? palette.text_primary : palette.text_muted,
+             "<");
+    FillRect(renderer,
+             layout.target_page_next_rect,
+             layout.has_next_page ? SDL_Color{18, 28, 40, 255} : SDL_Color{14, 20, 28, 180});
+    DrawRect(renderer,
+             layout.target_page_next_rect,
+             layout.has_next_page ? palette.accent_2 : palette.grid);
+    DrawText(renderer,
+             layout.target_page_next_rect.x + 7,
+             layout.target_page_next_rect.y + 4,
+             1,
+             layout.has_next_page ? palette.text_primary : palette.text_muted,
+             ">");
+    const std::string rows_label =
+        layout.target_rows.empty()
+            ? std::string("ROWS 0/0")
+            : std::string("ROWS ") + std::to_string(layout.first_visible_index + 1) + "-" +
+                  std::to_string(layout.first_visible_index + layout.target_rows.size()) + "/" +
+                  std::to_string(targeting.windows.size());
+    DrawText(renderer,
+             layout.target_list_rect.x + layout.target_list_rect.w - 196,
+             layout.target_list_rect.y + 7,
+             1,
+             palette.text_muted,
+             rows_label);
+
+    if (layout.target_rows.empty()) {
+        DrawText(renderer,
+                 layout.target_list_rect.x + 10,
+                 layout.target_list_rect.y + 30,
+                 1,
+                 palette.text_muted,
+                 "NO TARGETABLE WINDOWS");
+    } else {
+        for (const SettingsPanelTargetRow& row : layout.target_rows) {
+            const bool selected = row.window_index == targeting.selected_index;
+            const SDL_Color row_border = selected ? palette.accent : palette.grid;
+            const SDL_Color row_fill = selected ? SDL_Color{20, 52, 48, 255}
+                                                : SDL_Color{16, 23, 33, 255};
+            FillRect(renderer, row.rect, row_fill);
+            DrawRect(renderer, row.rect, row_border);
+
+            const auto& window = targeting.windows[static_cast<std::size_t>(row.window_index)];
+            const std::string row_label =
+                std::to_string(row.window_index + 1) + ". " + TargetLabel(window) + "  " +
+                std::to_string(window.width) + "x" + std::to_string(window.height);
+            DrawText(renderer,
+                     row.rect.x + 8,
+                     row.rect.y + 6,
+                     1,
+                     selected ? palette.text_primary : palette.text_muted,
+                     SanitizeUiText(row_label, 54));
+        }
+    }
+
+    const int info_y = layout.target_list_rect.y + layout.target_list_rect.h + 16;
     DrawText(renderer,
              layout.panel_rect.x + 18,
              info_y,
@@ -970,7 +1181,8 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
              info_y + 18,
              1,
              palette.text_muted,
-             std::string("VISIBLE TARGETS ") + std::to_string(targeting.windows.size()));
+             std::string("VISIBLE TARGETS ") + std::to_string(targeting.windows.size()) +
+                 "  WHEEL/PAGE TO SCROLL");
     DrawText(renderer,
              layout.panel_rect.x + 18,
              info_y + 36,
@@ -993,7 +1205,7 @@ void DrawFooter(SDL_Renderer* renderer,
              rect.y + 6,
              1,
              palette.text_muted,
-             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  S SETTINGS  T QUERY  TAB CYCLE\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  D DEFAULTS  ESC QUIT");
+             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  S SETTINGS  T QUERY  TAB CYCLE\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  PG/WHEEL LIST  ESC QUIT");
 
     const SDL_Color status_color =
         (state.status_until > SteadyClock::now()) ? palette.accent : palette.text_muted;
@@ -1132,6 +1344,54 @@ int RunWindow(const AppOptions& options) {
         }
     }
 
+    auto settings_visible_rows = [&]() {
+        int width = 0;
+        int height = 0;
+        SDL_GetRendererOutputSize(renderer, &width, &height);
+        return ComputeSettingsVisibleRows(height);
+    };
+
+    auto clamp_target_list_start = [&]() {
+        state.target_list_start_index =
+            ClampTargetListStartIndex(targeting,
+                                      settings_visible_rows(),
+                                      state.target_list_start_index);
+    };
+
+    auto ensure_selected_target_visible = [&]() {
+        const int visible_rows = settings_visible_rows();
+        if (targeting.selected_index >= 0) {
+            if (targeting.selected_index < state.target_list_start_index) {
+                state.target_list_start_index = targeting.selected_index;
+            } else if (targeting.selected_index >=
+                       (state.target_list_start_index + visible_rows)) {
+                state.target_list_start_index =
+                    targeting.selected_index - visible_rows + 1;
+            }
+        }
+
+        state.target_list_start_index =
+            ClampTargetListStartIndex(targeting, visible_rows, state.target_list_start_index);
+    };
+
+    auto scroll_target_list = [&](int delta_rows) {
+        if (targeting.windows.empty() || delta_rows == 0) {
+            return;
+        }
+
+        state.target_list_start_index =
+            ClampTargetListStartIndex(targeting,
+                                      settings_visible_rows(),
+                                      state.target_list_start_index + delta_rows);
+    };
+
+    auto page_target_list = [&](int direction) {
+        const int visible_rows = settings_visible_rows();
+        scroll_target_list(direction * std::max(1, visible_rows - 1));
+    };
+
+    ensure_selected_target_visible();
+
     auto persist_overlay_settings = [&]() {
         int window_width = 0;
         int window_height = 0;
@@ -1169,11 +1429,14 @@ int RunWindow(const AppOptions& options) {
         SetStatus(state, "EDIT TARGET QUERY", std::chrono::seconds(2));
     };
 
-    auto apply_target_query_edit = [&]() {
-        targeting.title_query = TrimWhitespace(state.target_query_buffer);
+    auto apply_target_query = [&](std::string query, bool stop_edit_mode) {
+        targeting.title_query = TrimWhitespace(query);
         targeting.selected_index = -1;
         RefreshTargets(targeting, kSelfTitleMarker);
-        stop_target_query_edit();
+        if (stop_edit_mode) {
+            stop_target_query_edit();
+        }
+        ensure_selected_target_visible();
 
         if (targeting.title_query.empty()) {
             SetStatus(state, "TARGET QUERY CLEARED", std::chrono::seconds(2));
@@ -1186,9 +1449,40 @@ int RunWindow(const AppOptions& options) {
         persist_overlay_settings();
     };
 
+    auto apply_target_query_edit = [&]() {
+        apply_target_query(state.target_query_buffer, true);
+    };
+
+    auto apply_active_target_query = [&]() {
+        apply_target_query(targeting.title_query, false);
+    };
+
     auto cancel_target_query_edit = [&]() {
         stop_target_query_edit();
         SetStatus(state, "TARGET QUERY CANCELED", std::chrono::seconds(2));
+    };
+
+    auto clear_target_query = [&]() {
+        stop_target_query_edit();
+        targeting.title_query.clear();
+        targeting.selected_index = -1;
+        state.target_list_start_index = 0;
+        RefreshTargets(targeting, kSelfTitleMarker);
+        SetStatus(state, "TARGET QUERY CLEARED", std::chrono::seconds(2));
+        persist_overlay_settings();
+    };
+
+    auto select_target_row = [&](int window_index) {
+        if (window_index < 0 || window_index >= static_cast<int>(targeting.windows.size())) {
+            return;
+        }
+
+        targeting.selected_index = window_index;
+        targeting.title_query =
+            TargetQueryForPersistence(targeting.windows[static_cast<std::size_t>(window_index)]);
+        ensure_selected_target_visible();
+        SetStatus(state, "TARGET SELECTED", std::chrono::seconds(2));
+        persist_overlay_settings();
     };
 
     auto perform_settings_action = [&](SettingsPanelAction action) {
@@ -1251,6 +1545,7 @@ int RunWindow(const AppOptions& options) {
                 if (const auto target = CurrentTarget(targeting)) {
                     targeting.title_query = TargetQueryForPersistence(*target);
                 }
+                ensure_selected_target_visible();
                 SetStatus(state,
                           CurrentTarget(targeting).has_value() ? "TARGET CHANGED"
                                                                : "NO TARGET AVAILABLE",
@@ -1262,6 +1557,7 @@ int RunWindow(const AppOptions& options) {
                 if (const auto target = CurrentTarget(targeting)) {
                     targeting.title_query = TargetQueryForPersistence(*target);
                 }
+                ensure_selected_target_visible();
                 SetStatus(state,
                           CurrentTarget(targeting).has_value() ? "FRONTMOST TARGET LOCKED"
                                                                : "NO TARGET FOUND",
@@ -1269,16 +1565,14 @@ int RunWindow(const AppOptions& options) {
                 persist_overlay_settings();
                 break;
             case SettingsPanelAction::ClearTarget:
-                targeting.selected_index = -1;
-                targeting.title_query.clear();
-                SetStatus(state, "TARGET CLEARED", std::chrono::seconds(2));
-                persist_overlay_settings();
+                clear_target_query();
                 break;
             case SettingsPanelAction::ResetDefaults:
                 overlay_settings = framewatch::OverlaySettings{};
                 targeting.follow_enabled = overlay_settings.follow_target_window;
                 targeting.title_query = overlay_settings.target_window_query;
                 targeting.selected_index = -1;
+                state.target_list_start_index = 0;
                 SDL_SetWindowSize(window,
                                   overlay_settings.window_width,
                                   overlay_settings.window_height);
@@ -1303,13 +1597,34 @@ int RunWindow(const AppOptions& options) {
                     }
                     state.target_query_buffer.push_back(static_cast<char>(ch));
                 }
+            } else if (event.type == SDL_MOUSEWHEEL && state.show_settings_panel &&
+                       !state.editing_target_query) {
+                int width = 0;
+                int height = 0;
+                int mouse_x = 0;
+                int mouse_y = 0;
+                SDL_GetRendererOutputSize(renderer, &width, &height);
+                SDL_GetMouseState(&mouse_x, &mouse_y);
+                const SettingsPanelLayout layout =
+                    BuildSettingsPanelLayout(width,
+                                             height,
+                                             overlay_settings,
+                                             targeting,
+                                             state.target_list_start_index);
+                if (PointInRect(mouse_x, mouse_y, layout.target_list_rect)) {
+                    scroll_target_list(-event.wheel.y);
+                }
             } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT &&
                        state.show_settings_panel) {
                 int width = 0;
                 int height = 0;
                 SDL_GetRendererOutputSize(renderer, &width, &height);
                 const SettingsPanelLayout layout =
-                    BuildSettingsPanelLayout(width, height, overlay_settings, targeting);
+                    BuildSettingsPanelLayout(width,
+                                             height,
+                                             overlay_settings,
+                                             targeting,
+                                             state.target_list_start_index);
                 const int mouse_x = event.button.x;
                 const int mouse_y = event.button.y;
 
@@ -1321,7 +1636,42 @@ int RunWindow(const AppOptions& options) {
                     SetStatus(state, "SETTINGS PANEL CLOSED", std::chrono::seconds(2));
                 } else if (PointInRect(mouse_x, mouse_y, layout.query_rect)) {
                     begin_target_query_edit();
+                } else if (PointInRect(mouse_x, mouse_y, layout.query_apply_rect)) {
+                    if (state.editing_target_query) {
+                        apply_target_query_edit();
+                    } else {
+                        apply_active_target_query();
+                    }
+                } else if (PointInRect(mouse_x, mouse_y, layout.query_clear_rect)) {
+                    clear_target_query();
                 } else if (!state.editing_target_query) {
+                    bool handled = false;
+                    if (layout.has_prev_page &&
+                        PointInRect(mouse_x, mouse_y, layout.target_page_prev_rect)) {
+                        page_target_list(-1);
+                        handled = true;
+                    } else if (layout.has_next_page &&
+                               PointInRect(mouse_x, mouse_y, layout.target_page_next_rect)) {
+                        page_target_list(1);
+                        handled = true;
+                    }
+
+                    if (handled) {
+                        continue;
+                    }
+
+                    for (const SettingsPanelTargetRow& row : layout.target_rows) {
+                        if (PointInRect(mouse_x, mouse_y, row.rect)) {
+                            select_target_row(row.window_index);
+                            handled = true;
+                            break;
+                        }
+                    }
+
+                    if (handled) {
+                        continue;
+                    }
+
                     for (const SettingsPanelButton& button : layout.buttons) {
                         if (PointInRect(mouse_x, mouse_y, button.rect)) {
                             perform_settings_action(button.action);
@@ -1371,6 +1721,16 @@ int RunWindow(const AppOptions& options) {
                     case SDLK_t:
                         begin_target_query_edit();
                         break;
+                    case SDLK_PAGEUP:
+                        if (state.show_settings_panel) {
+                            page_target_list(-1);
+                        }
+                        break;
+                    case SDLK_PAGEDOWN:
+                        if (state.show_settings_panel) {
+                            page_target_list(1);
+                        }
+                        break;
                     case SDLK_SPACE:
                         state.running = !state.running;
                         SetStatus(state,
@@ -1402,6 +1762,7 @@ int RunWindow(const AppOptions& options) {
                         if (const auto target = CurrentTarget(targeting)) {
                             targeting.title_query = TargetQueryForPersistence(*target);
                         }
+                        ensure_selected_target_visible();
                         SetStatus(state,
                                   CurrentTarget(targeting).has_value() ? "TARGET CHANGED"
                                                                        : "NO TARGET AVAILABLE",
@@ -1449,6 +1810,7 @@ int RunWindow(const AppOptions& options) {
 
         if ((now - state.last_target_refresh_at) >= std::chrono::milliseconds(750)) {
             RefreshTargets(targeting, kSelfTitleMarker);
+            clamp_target_list_start();
             state.last_target_refresh_at = now;
         }
 
@@ -1471,6 +1833,7 @@ int RunWindow(const AppOptions& options) {
         int width = 0;
         int height = 0;
         SDL_GetRendererOutputSize(renderer, &width, &height);
+        clamp_target_list_start();
         int window_width = 0;
         int window_height = 0;
         SDL_GetWindowSize(window, &window_width, &window_height);
