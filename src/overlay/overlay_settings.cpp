@@ -132,6 +132,27 @@ std::optional<double> ExtractJsonNumber(std::string_view source, std::string_vie
     }
 }
 
+std::optional<int> ExtractJsonInteger(std::string_view source, std::string_view key) {
+    const auto token = ExtractJsonToken(source, key);
+    if (!token.has_value() || *token == "null") {
+        return std::nullopt;
+    }
+
+    try {
+        return std::stoi(*token);
+    } catch (...) {
+        return std::nullopt;
+    }
+}
+
+int ClampWindowWidth(int width) noexcept {
+    return std::max(width, 640);
+}
+
+int ClampWindowHeight(int height) noexcept {
+    return std::max(height, 420);
+}
+
 std::string EscapeJsonString(std::string_view value) {
     std::string escaped;
     escaped.reserve(value.size());
@@ -272,6 +293,14 @@ std::optional<OverlaySettings> LoadOverlaySettings(const std::filesystem::path& 
     if (const auto target_query = ExtractJsonToken(content, "target_window_query")) {
         settings.target_window_query = *target_query;
     }
+    if (const auto window_width = ExtractJsonInteger(content, "window_width")) {
+        settings.window_width = ClampWindowWidth(*window_width);
+    }
+    if (const auto window_height = ExtractJsonInteger(content, "window_height")) {
+        settings.window_height = ClampWindowHeight(*window_height);
+    }
+    settings.window_x = ExtractJsonInteger(content, "window_x");
+    settings.window_y = ExtractJsonInteger(content, "window_y");
 
     return settings;
 }
@@ -298,7 +327,15 @@ bool SaveOverlaySettings(const OverlaySettings& settings, const std::filesystem:
     output << "  \"dock_anchor\": \"" << OverlayDockAnchorName(settings.dock_anchor) << "\",\n";
     output << "  \"follow_target_window\": " << settings.follow_target_window << ",\n";
     output << "  \"target_window_query\": \""
-           << EscapeJsonString(settings.target_window_query) << "\"\n";
+           << EscapeJsonString(settings.target_window_query) << "\",\n";
+    output << "  \"window_width\": " << ClampWindowWidth(settings.window_width) << ",\n";
+    output << "  \"window_height\": " << ClampWindowHeight(settings.window_height) << ",\n";
+    output << "  \"window_x\": "
+           << (settings.window_x.has_value() ? std::to_string(*settings.window_x) : "null")
+           << ",\n";
+    output << "  \"window_y\": "
+           << (settings.window_y.has_value() ? std::to_string(*settings.window_y) : "null")
+           << '\n';
     output << "}\n";
 
     return output.good();

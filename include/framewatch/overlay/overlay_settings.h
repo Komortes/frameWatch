@@ -21,6 +21,10 @@ struct OverlaySettings {
     OverlayDockAnchor dock_anchor{OverlayDockAnchor::RightTop};
     bool follow_target_window{false};
     std::string target_window_query;
+    int window_width{1180};
+    int window_height{760};
+    std::optional<int> window_x;
+    std::optional<int> window_y;
 };
 
 double ClampOverlayOpacity(double opacity) noexcept;

@@ -85,6 +85,8 @@ Controls:
 - `B`: start or stop benchmark recording
 - `R`: reset the session
 - `E`: export the current session
+- `S`: open or close the in-window settings panel
+- `T`: edit the target window query from inside the visualizer
 - `C`: cycle target dock anchor (`right-top`, `right-bottom`, `left-top`, `left-bottom`)
 - `[` / `]`: decrease or increase overlay panel opacity
 - `V`: toggle the frametime graph
@@ -107,6 +109,9 @@ The settings JSON keeps the current overlay layout and target-window restore sta
 - panel opacity and dock anchor
 - follow-target mode
 - last selected target query
+- window size and last position
+
+The debug window can also show a live settings drawer with `S`. The drawer is actionable: you can click its buttons, click the query field to edit the target filter, and close it by pressing `Esc` or clicking outside the panel.
 
 For a non-GUI verification run:
 

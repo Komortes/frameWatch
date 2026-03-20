@@ -91,12 +91,41 @@ struct SyntheticFrameGenerator {
 struct WindowState {
     bool running{true};
     bool quit{false};
+    bool show_settings_panel{false};
+    bool editing_target_query{false};
+    std::string target_query_buffer;
     std::string status_text{"SIMULATION RUNNING"};
     SteadyClock::time_point status_until{};
     SteadyClock::time_point last_step_at{SteadyClock::now()};
     SteadyClock::time_point last_title_update_at{SteadyClock::now()};
     SteadyClock::time_point last_target_refresh_at{SteadyClock::now() - std::chrono::seconds(1)};
     SteadyClock::time_point last_follow_sync_at{SteadyClock::now() - std::chrono::seconds(1)};
+};
+
+enum class SettingsPanelAction {
+    ToggleGraph,
+    ToggleSidebar,
+    ToggleFollow,
+    CycleDock,
+    OpacityDown,
+    OpacityUp,
+    TargetNext,
+    TargetFront,
+    ClearTarget,
+    ResetDefaults,
+};
+
+struct SettingsPanelButton {
+    SDL_Rect rect{};
+    SettingsPanelAction action{SettingsPanelAction::ToggleGraph};
+    std::string label;
+    bool accent{false};
+};
+
+struct SettingsPanelLayout {
+    SDL_Rect panel_rect{};
+    SDL_Rect query_rect{};
+    std::vector<SettingsPanelButton> buttons;
 };
 
 AppOptions ParseArgs(int argc, char** argv) {
@@ -165,6 +194,22 @@ std::string SanitizeUiText(std::string_view text, std::size_t max_chars = 30) {
     }
 
     return output;
+}
+
+std::string TrimWhitespace(std::string_view text) {
+    std::size_t start = 0;
+    while (start < text.size() &&
+           std::isspace(static_cast<unsigned char>(text[start])) != 0) {
+        ++start;
+    }
+
+    std::size_t end = text.size();
+    while (end > start &&
+           std::isspace(static_cast<unsigned char>(text[end - 1])) != 0) {
+        --end;
+    }
+
+    return std::string(text.substr(start, end - start));
 }
 
 Glyph GlyphFor(char input) {
@@ -774,9 +819,164 @@ void DrawSidebar(SDL_Renderer* renderer,
         target_lines.push_back("TAB NEXT  SHIFT+TAB PREV");
         target_lines.push_back("G FRONTMOST  F FOLLOW  N CLEAR");
         target_lines.push_back("C DOCK  [ ] OPACITY  V/I TOGGLE");
-        target_lines.push_back("D RESET  JSON AUTO-SAVE");
+        target_lines.push_back("S PANEL  T QUERY  D RESET");
     }
     DrawInfoPanel(renderer, target_rect, palette, palette.accent, "TARGET WINDOW", target_lines);
+}
+
+bool PointInRect(int x, int y, const SDL_Rect& rect) {
+    return x >= rect.x && y >= rect.y && x < (rect.x + rect.w) && y < (rect.y + rect.h);
+}
+
+void DrawSettingsButton(SDL_Renderer* renderer,
+                        const Palette& palette,
+                        const SettingsPanelButton& button) {
+    const SDL_Color accent = button.accent ? palette.accent : palette.accent_2;
+    FillRect(renderer, button.rect, SDL_Color{18, 24, 34, 240});
+    DrawRect(renderer, button.rect, accent);
+
+    const int label_width = TextWidth(button.label, 1);
+    const int text_x = button.rect.x + std::max(12, (button.rect.w - label_width) / 2);
+    const int text_y = button.rect.y + std::max(8, (button.rect.h - 8) / 2);
+    DrawText(renderer, text_x, text_y, 1, palette.text_primary, button.label);
+}
+
+SettingsPanelLayout BuildSettingsPanelLayout(int width,
+                                             int height,
+                                             const framewatch::OverlaySettings& settings,
+                                             const TargetingState& targeting) {
+    SettingsPanelLayout layout;
+    const int panel_width = std::min(width - 72, 520);
+    const int panel_height = std::min(height - 120, 356);
+    layout.panel_rect = SDL_Rect{(width - panel_width) / 2, 112, panel_width, panel_height};
+    layout.query_rect = SDL_Rect{layout.panel_rect.x + 18, layout.panel_rect.y + 46, panel_width - 36, 34};
+
+    const int button_gap = 10;
+    const int button_width = (panel_width - 54) / 2;
+    const int button_height = 30;
+    const int button_start_y = layout.panel_rect.y + 96;
+
+    auto add_button = [&](int row,
+                          int column,
+                          SettingsPanelAction action,
+                          std::string label,
+                          bool accent = false) {
+        layout.buttons.push_back(SettingsPanelButton{
+            SDL_Rect{layout.panel_rect.x + 18 + column * (button_width + button_gap),
+                     button_start_y + row * (button_height + button_gap),
+                     button_width,
+                     button_height},
+            action,
+            std::move(label),
+            accent,
+        });
+    };
+
+    add_button(0,
+               0,
+               SettingsPanelAction::ToggleGraph,
+               std::string("GRAPH ") + (settings.show_graph ? "ON" : "OFF"),
+               settings.show_graph);
+    add_button(0,
+               1,
+               SettingsPanelAction::ToggleSidebar,
+               std::string("SIDEBAR ") + (settings.show_sidebar ? "ON" : "OFF"),
+               settings.show_sidebar);
+    add_button(1,
+               0,
+               SettingsPanelAction::ToggleFollow,
+               std::string("FOLLOW ") + (targeting.follow_enabled ? "ON" : "OFF"),
+               targeting.follow_enabled);
+    add_button(1,
+               1,
+               SettingsPanelAction::CycleDock,
+               std::string("DOCK ") + std::string(framewatch::OverlayDockAnchorName(settings.dock_anchor)));
+    add_button(2, 0, SettingsPanelAction::OpacityDown, "OPACITY -");
+    add_button(2,
+               1,
+               SettingsPanelAction::OpacityUp,
+               std::string("OPACITY +"));
+    add_button(3, 0, SettingsPanelAction::TargetNext, "TARGET NEXT");
+    add_button(3, 1, SettingsPanelAction::TargetFront, "TARGET FRONT");
+    add_button(4, 0, SettingsPanelAction::ClearTarget, "CLEAR TARGET");
+    add_button(4, 1, SettingsPanelAction::ResetDefaults, "RESET DEFAULTS");
+
+    return layout;
+}
+
+void DrawSettingsOverlay(SDL_Renderer* renderer,
+                         int width,
+                         int height,
+                         const Palette& palette,
+                         const framewatch::OverlaySettings& settings,
+                         const TargetingState& targeting,
+                         const WindowState& state,
+                         const std::filesystem::path& settings_path,
+                         int window_width,
+                         int window_height,
+                         int window_x,
+                         int window_y) {
+    FillRect(renderer, SDL_Rect{0, 0, width, height}, SDL_Color{4, 8, 14, 170});
+
+    const SettingsPanelLayout layout = BuildSettingsPanelLayout(width, height, settings, targeting);
+    FillRect(renderer, layout.panel_rect, palette.panel);
+    DrawRect(renderer, layout.panel_rect, palette.panel_border);
+    FillRect(renderer,
+             SDL_Rect{layout.panel_rect.x, layout.panel_rect.y, layout.panel_rect.w, 4},
+             palette.warning);
+
+    DrawText(renderer,
+             layout.panel_rect.x + 16,
+             layout.panel_rect.y + 14,
+             2,
+             palette.text_primary,
+             "SETTINGS");
+    DrawText(renderer,
+             layout.panel_rect.x + layout.panel_rect.w - 154,
+             layout.panel_rect.y + 16,
+             1,
+             palette.text_muted,
+             state.editing_target_query ? "ENTER APPLY  ESC CANCEL" : "CLICK QUERY OR PRESS T");
+
+    FillRect(renderer,
+             layout.query_rect,
+             state.editing_target_query ? SDL_Color{22, 33, 49, 255} : SDL_Color{14, 20, 28, 255});
+    DrawRect(renderer, layout.query_rect, state.editing_target_query ? palette.accent : palette.grid);
+    DrawText(renderer,
+             layout.query_rect.x + 10,
+             layout.query_rect.y + 9,
+             1,
+             palette.text_primary,
+             state.editing_target_query
+                 ? SanitizeUiText(state.target_query_buffer + "_", 46)
+                 : std::string("QUERY ") +
+                       (targeting.title_query.empty() ? "NONE"
+                                                      : SanitizeUiText(targeting.title_query, 38)));
+
+    for (const SettingsPanelButton& button : layout.buttons) {
+        DrawSettingsButton(renderer, palette, button);
+    }
+
+    const int info_y = layout.panel_rect.y + 280;
+    DrawText(renderer,
+             layout.panel_rect.x + 18,
+             info_y,
+             1,
+             palette.text_muted,
+             std::string("WINDOW ") + std::to_string(window_width) + "X" + std::to_string(window_height) +
+                 "  POS " + std::to_string(window_x) + "," + std::to_string(window_y));
+    DrawText(renderer,
+             layout.panel_rect.x + 18,
+             info_y + 18,
+             1,
+             palette.text_muted,
+             std::string("VISIBLE TARGETS ") + std::to_string(targeting.windows.size()));
+    DrawText(renderer,
+             layout.panel_rect.x + 18,
+             info_y + 36,
+             1,
+             palette.text_muted,
+             std::string("FILE ") + SanitizeUiText(settings_path.string(), 52));
 }
 
 void DrawFooter(SDL_Renderer* renderer,
@@ -793,7 +993,7 @@ void DrawFooter(SDL_Renderer* renderer,
              rect.y + 6,
              1,
              palette.text_muted,
-             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  TAB CYCLE  SHIFT+TAB BACK\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  D DEFAULTS  ESC QUIT");
+             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  S SETTINGS  T QUERY  TAB CYCLE\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  D DEFAULTS  ESC QUIT");
 
     const SDL_Color status_color =
         (state.status_until > SteadyClock::now()) ? palette.accent : palette.text_muted;
@@ -874,11 +1074,20 @@ int RunWindow(const AppOptions& options) {
         return EXIT_FAILURE;
     }
 
+    framewatch::OverlaySettings overlay_settings;
+    if (const auto loaded_settings = framewatch::LoadOverlaySettings(options.settings_path)) {
+        overlay_settings = *loaded_settings;
+    }
+
+    const int initial_window_x =
+        overlay_settings.window_x.value_or(SDL_WINDOWPOS_CENTERED);
+    const int initial_window_y =
+        overlay_settings.window_y.value_or(SDL_WINDOWPOS_CENTERED);
     SDL_Window* window = SDL_CreateWindow(kSelfTitleMarker.data(),
-                                          SDL_WINDOWPOS_CENTERED,
-                                          SDL_WINDOWPOS_CENTERED,
-                                          1180,
-                                          760,
+                                          initial_window_x,
+                                          initial_window_y,
+                                          overlay_settings.window_width,
+                                          overlay_settings.window_height,
                                           SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE |
                                               SDL_WINDOW_ALLOW_HIGHDPI);
     if (window == nullptr) {
@@ -903,10 +1112,6 @@ int RunWindow(const AppOptions& options) {
     SDL_SetRenderDrawBlendMode(renderer, SDL_BLENDMODE_BLEND);
 
     Palette palette;
-    framewatch::OverlaySettings overlay_settings;
-    if (const auto loaded_settings = framewatch::LoadOverlaySettings(options.settings_path)) {
-        overlay_settings = *loaded_settings;
-    }
     framewatch::PerformanceSession benchmark;
     benchmark.ResetSyntheticTimeline();
     SyntheticFrameGenerator generator;
@@ -928,10 +1133,161 @@ int RunWindow(const AppOptions& options) {
     }
 
     auto persist_overlay_settings = [&]() {
+        int window_width = 0;
+        int window_height = 0;
+        SDL_GetWindowSize(window, &window_width, &window_height);
+        overlay_settings.window_width = std::max(window_width, 640);
+        overlay_settings.window_height = std::max(window_height, 420);
+
+        int window_x = 0;
+        int window_y = 0;
+        SDL_GetWindowPosition(window, &window_x, &window_y);
+        overlay_settings.window_x = window_x;
+        overlay_settings.window_y = window_y;
+
         overlay_settings.follow_target_window = targeting.follow_enabled;
         overlay_settings.target_window_query = targeting.title_query;
         if (!framewatch::SaveOverlaySettings(overlay_settings, options.settings_path)) {
             SetStatus(state, "SETTINGS SAVE FAILED", std::chrono::seconds(3));
+        }
+    };
+
+    auto stop_target_query_edit = [&]() {
+        if (!state.editing_target_query) {
+            return;
+        }
+        state.editing_target_query = false;
+        state.target_query_buffer.clear();
+        SDL_StopTextInput();
+    };
+
+    auto begin_target_query_edit = [&]() {
+        state.show_settings_panel = true;
+        state.editing_target_query = true;
+        state.target_query_buffer = targeting.title_query;
+        SDL_StartTextInput();
+        SetStatus(state, "EDIT TARGET QUERY", std::chrono::seconds(2));
+    };
+
+    auto apply_target_query_edit = [&]() {
+        targeting.title_query = TrimWhitespace(state.target_query_buffer);
+        targeting.selected_index = -1;
+        RefreshTargets(targeting, kSelfTitleMarker);
+        stop_target_query_edit();
+
+        if (targeting.title_query.empty()) {
+            SetStatus(state, "TARGET QUERY CLEARED", std::chrono::seconds(2));
+        } else if (CurrentTarget(targeting).has_value()) {
+            SetStatus(state, "TARGET QUERY APPLIED", std::chrono::seconds(2));
+        } else {
+            SetStatus(state, "TARGET QUERY NO MATCH", std::chrono::seconds(2));
+        }
+
+        persist_overlay_settings();
+    };
+
+    auto cancel_target_query_edit = [&]() {
+        stop_target_query_edit();
+        SetStatus(state, "TARGET QUERY CANCELED", std::chrono::seconds(2));
+    };
+
+    auto perform_settings_action = [&](SettingsPanelAction action) {
+        switch (action) {
+            case SettingsPanelAction::ToggleGraph:
+                overlay_settings.show_graph = !overlay_settings.show_graph;
+                SetStatus(state,
+                          overlay_settings.show_graph ? "GRAPH VISIBLE" : "GRAPH HIDDEN",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::ToggleSidebar:
+                overlay_settings.show_sidebar = !overlay_settings.show_sidebar;
+                SetStatus(state,
+                          overlay_settings.show_sidebar ? "SIDEBAR VISIBLE"
+                                                        : "SIDEBAR HIDDEN",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::ToggleFollow:
+                targeting.follow_enabled = !targeting.follow_enabled;
+                SetStatus(state,
+                          targeting.follow_enabled ? "FOLLOW TARGET ON" : "FOLLOW TARGET OFF",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::CycleDock:
+                overlay_settings.dock_anchor =
+                    framewatch::CycleOverlayDockAnchor(overlay_settings.dock_anchor);
+                SetStatus(state,
+                          std::string("DOCK ") +
+                              std::string(framewatch::OverlayDockAnchorName(
+                                  overlay_settings.dock_anchor)),
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::OpacityDown:
+                framewatch::AdjustOverlayOpacity(overlay_settings, -0.10);
+                SetStatus(state,
+                          std::string("OPACITY ") +
+                              std::to_string(static_cast<int>(std::lround(
+                                  overlay_settings.panel_opacity * 100.0))) +
+                              "%",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::OpacityUp:
+                framewatch::AdjustOverlayOpacity(overlay_settings, 0.10);
+                SetStatus(state,
+                          std::string("OPACITY ") +
+                              std::to_string(static_cast<int>(std::lround(
+                                  overlay_settings.panel_opacity * 100.0))) +
+                              "%",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::TargetNext:
+                RefreshTargets(targeting, kSelfTitleMarker);
+                CycleTarget(targeting, 1);
+                if (const auto target = CurrentTarget(targeting)) {
+                    targeting.title_query = TargetQueryForPersistence(*target);
+                }
+                SetStatus(state,
+                          CurrentTarget(targeting).has_value() ? "TARGET CHANGED"
+                                                               : "NO TARGET AVAILABLE",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::TargetFront:
+                PickFrontmostTarget(targeting, kSelfTitleMarker);
+                if (const auto target = CurrentTarget(targeting)) {
+                    targeting.title_query = TargetQueryForPersistence(*target);
+                }
+                SetStatus(state,
+                          CurrentTarget(targeting).has_value() ? "FRONTMOST TARGET LOCKED"
+                                                               : "NO TARGET FOUND",
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::ClearTarget:
+                targeting.selected_index = -1;
+                targeting.title_query.clear();
+                SetStatus(state, "TARGET CLEARED", std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
+            case SettingsPanelAction::ResetDefaults:
+                overlay_settings = framewatch::OverlaySettings{};
+                targeting.follow_enabled = overlay_settings.follow_target_window;
+                targeting.title_query = overlay_settings.target_window_query;
+                targeting.selected_index = -1;
+                SDL_SetWindowSize(window,
+                                  overlay_settings.window_width,
+                                  overlay_settings.window_height);
+                SDL_SetWindowPosition(window,
+                                      SDL_WINDOWPOS_CENTERED,
+                                      SDL_WINDOWPOS_CENTERED);
+                SetStatus(state, "SETTINGS RESET", std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
         }
     };
 
@@ -940,11 +1296,80 @@ int RunWindow(const AppOptions& options) {
         while (SDL_PollEvent(&event) != 0) {
             if (event.type == SDL_QUIT) {
                 state.quit = true;
+            } else if (event.type == SDL_TEXTINPUT && state.editing_target_query) {
+                for (const unsigned char ch : std::string_view(event.text.text)) {
+                    if (ch < 32 || ch > 126 || state.target_query_buffer.size() >= 46) {
+                        continue;
+                    }
+                    state.target_query_buffer.push_back(static_cast<char>(ch));
+                }
+            } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT &&
+                       state.show_settings_panel) {
+                int width = 0;
+                int height = 0;
+                SDL_GetRendererOutputSize(renderer, &width, &height);
+                const SettingsPanelLayout layout =
+                    BuildSettingsPanelLayout(width, height, overlay_settings, targeting);
+                const int mouse_x = event.button.x;
+                const int mouse_y = event.button.y;
+
+                if (!PointInRect(mouse_x, mouse_y, layout.panel_rect)) {
+                    if (state.editing_target_query) {
+                        cancel_target_query_edit();
+                    }
+                    state.show_settings_panel = false;
+                    SetStatus(state, "SETTINGS PANEL CLOSED", std::chrono::seconds(2));
+                } else if (PointInRect(mouse_x, mouse_y, layout.query_rect)) {
+                    begin_target_query_edit();
+                } else if (!state.editing_target_query) {
+                    for (const SettingsPanelButton& button : layout.buttons) {
+                        if (PointInRect(mouse_x, mouse_y, button.rect)) {
+                            perform_settings_action(button.action);
+                            break;
+                        }
+                    }
+                }
             } else if (event.type == SDL_KEYDOWN && event.key.repeat == 0) {
                 const bool shift_held = (event.key.keysym.mod & KMOD_SHIFT) != 0;
+
+                if (state.editing_target_query) {
+                    switch (event.key.keysym.sym) {
+                        case SDLK_ESCAPE:
+                            cancel_target_query_edit();
+                            break;
+                        case SDLK_RETURN:
+                        case SDLK_KP_ENTER:
+                            apply_target_query_edit();
+                            break;
+                        case SDLK_BACKSPACE:
+                            if (!state.target_query_buffer.empty()) {
+                                state.target_query_buffer.pop_back();
+                            }
+                            break;
+                        default:
+                            break;
+                    }
+                    continue;
+                }
+
                 switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE:
-                        state.quit = true;
+                        if (state.show_settings_panel) {
+                            state.show_settings_panel = false;
+                            SetStatus(state, "SETTINGS PANEL CLOSED", std::chrono::seconds(2));
+                        } else {
+                            state.quit = true;
+                        }
+                        break;
+                    case SDLK_s:
+                        state.show_settings_panel = !state.show_settings_panel;
+                        SetStatus(state,
+                                  state.show_settings_panel ? "SETTINGS PANEL OPEN"
+                                                            : "SETTINGS PANEL CLOSED",
+                                  std::chrono::seconds(2));
+                        break;
+                    case SDLK_t:
+                        begin_target_query_edit();
                         break;
                     case SDLK_SPACE:
                         state.running = !state.running;
@@ -984,81 +1409,31 @@ int RunWindow(const AppOptions& options) {
                         persist_overlay_settings();
                         break;
                     case SDLK_g:
-                        PickFrontmostTarget(targeting, kSelfTitleMarker);
-                        if (const auto target = CurrentTarget(targeting)) {
-                            targeting.title_query = TargetQueryForPersistence(*target);
-                        }
-                        SetStatus(state,
-                                  CurrentTarget(targeting).has_value() ? "FRONTMOST TARGET LOCKED"
-                                                                       : "NO TARGET FOUND",
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::TargetFront);
                         break;
                     case SDLK_f:
-                        targeting.follow_enabled = !targeting.follow_enabled;
-                        SetStatus(state,
-                                  targeting.follow_enabled ? "FOLLOW TARGET ON" : "FOLLOW TARGET OFF",
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::ToggleFollow);
                         break;
                     case SDLK_n:
-                        targeting.selected_index = -1;
-                        targeting.title_query.clear();
-                        SetStatus(state, "TARGET CLEARED", std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::ClearTarget);
                         break;
                     case SDLK_c:
-                        overlay_settings.dock_anchor =
-                            framewatch::CycleOverlayDockAnchor(overlay_settings.dock_anchor);
-                        SetStatus(state,
-                                  std::string("DOCK ") +
-                                      std::string(framewatch::OverlayDockAnchorName(
-                                          overlay_settings.dock_anchor)),
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::CycleDock);
                         break;
                     case SDLK_LEFTBRACKET:
-                        framewatch::AdjustOverlayOpacity(overlay_settings, -0.10);
-                        SetStatus(state,
-                                  std::string("OPACITY ") +
-                                      std::to_string(static_cast<int>(std::lround(
-                                          overlay_settings.panel_opacity * 100.0))) +
-                                      "%",
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::OpacityDown);
                         break;
                     case SDLK_RIGHTBRACKET:
-                        framewatch::AdjustOverlayOpacity(overlay_settings, 0.10);
-                        SetStatus(state,
-                                  std::string("OPACITY ") +
-                                      std::to_string(static_cast<int>(std::lround(
-                                          overlay_settings.panel_opacity * 100.0))) +
-                                      "%",
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::OpacityUp);
                         break;
                     case SDLK_v:
-                        overlay_settings.show_graph = !overlay_settings.show_graph;
-                        SetStatus(state,
-                                  overlay_settings.show_graph ? "GRAPH VISIBLE" : "GRAPH HIDDEN",
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::ToggleGraph);
                         break;
                     case SDLK_i:
-                        overlay_settings.show_sidebar = !overlay_settings.show_sidebar;
-                        SetStatus(state,
-                                  overlay_settings.show_sidebar ? "SIDEBAR VISIBLE"
-                                                                : "SIDEBAR HIDDEN",
-                                  std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::ToggleSidebar);
                         break;
                     case SDLK_d:
-                        overlay_settings = framewatch::OverlaySettings{};
-                        targeting.follow_enabled = overlay_settings.follow_target_window;
-                        targeting.title_query = overlay_settings.target_window_query;
-                        targeting.selected_index = -1;
-                        SetStatus(state, "SETTINGS RESET", std::chrono::seconds(2));
-                        persist_overlay_settings();
+                        perform_settings_action(SettingsPanelAction::ResetDefaults);
                         break;
                     default:
                         break;
@@ -1096,6 +1471,12 @@ int RunWindow(const AppOptions& options) {
         int width = 0;
         int height = 0;
         SDL_GetRendererOutputSize(renderer, &width, &height);
+        int window_width = 0;
+        int window_height = 0;
+        SDL_GetWindowSize(window, &window_width, &window_height);
+        int window_x = 0;
+        int window_y = 0;
+        SDL_GetWindowPosition(window, &window_x, &window_y);
 
         const Palette runtime_palette = ApplyOverlaySettings(palette, overlay_settings);
         const auto graph_snapshot = benchmark.GraphSnapshot();
@@ -1142,11 +1523,26 @@ int RunWindow(const AppOptions& options) {
                         overlay_settings);
         }
         DrawFooter(renderer, width, height, runtime_palette, state);
+        if (state.show_settings_panel) {
+            DrawSettingsOverlay(renderer,
+                                width,
+                                height,
+                                runtime_palette,
+                                overlay_settings,
+                                targeting,
+                                state,
+                                options.settings_path,
+                                window_width,
+                                window_height,
+                                window_x,
+                                window_y);
+        }
 
         SDL_RenderPresent(renderer);
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
     }
 
+    stop_target_query_edit();
     persist_overlay_settings();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

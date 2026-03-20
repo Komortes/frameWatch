@@ -312,6 +312,10 @@ bool TestOverlaySettingsPersistence() {
     settings.dock_anchor = framewatch::OverlayDockAnchor::LeftTop;
     settings.follow_target_window = true;
     settings.target_window_query = "Game \"Window\" \\\\ DX11";
+    settings.window_width = 1320;
+    settings.window_height = 840;
+    settings.window_x = 144;
+    settings.window_y = 96;
 
     const std::filesystem::path path =
         std::filesystem::temp_directory_path() / "framewatch_overlay_settings_test.json";
@@ -336,6 +340,14 @@ bool TestOverlaySettingsPersistence() {
                      "loaded settings should preserve follow_target_window");
         ok &= Expect(loaded->target_window_query == std::string("Game \"Window\" \\\\ DX11"),
                      "loaded settings should preserve escaped target query");
+        ok &= Expect(loaded->window_width == 1320,
+                     "loaded settings should preserve window width");
+        ok &= Expect(loaded->window_height == 840,
+                     "loaded settings should preserve window height");
+        ok &= Expect(loaded->window_x == std::optional<int>(144),
+                     "loaded settings should preserve window x");
+        ok &= Expect(loaded->window_y == std::optional<int>(96),
+                     "loaded settings should preserve window y");
     }
 
     std::filesystem::remove(path);
