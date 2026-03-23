@@ -94,6 +94,7 @@ struct WindowState {
     bool show_settings_panel{false};
     bool editing_target_query{false};
     int target_list_start_index{0};
+    int hovered_target_index{-1};
     std::string target_query_buffer;
     std::string status_text{"SIMULATION RUNNING"};
     SteadyClock::time_point status_until{};
@@ -151,7 +152,7 @@ constexpr int kSettingsButtonHeight = 24;
 constexpr int kSettingsButtonStartY = 84;
 constexpr int kSettingsTargetListHeaderHeight = 22;
 constexpr int kSettingsTargetRowStride = 22;
-constexpr int kSettingsInfoHeight = 54;
+constexpr int kSettingsInfoHeight = 108;
 constexpr int kSettingsBottomPadding = 16;
 
 AppOptions ParseArgs(int argc, char** argv) {
@@ -1149,9 +1150,12 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
     } else {
         for (const SettingsPanelTargetRow& row : layout.target_rows) {
             const bool selected = row.window_index == targeting.selected_index;
-            const SDL_Color row_border = selected ? palette.accent : palette.grid;
+            const bool hovered = row.window_index == state.hovered_target_index;
+            const SDL_Color row_border =
+                selected ? palette.accent : (hovered ? palette.accent_2 : palette.grid);
             const SDL_Color row_fill = selected ? SDL_Color{20, 52, 48, 255}
-                                                : SDL_Color{16, 23, 33, 255};
+                                                : (hovered ? SDL_Color{24, 35, 52, 255}
+                                                           : SDL_Color{16, 23, 33, 255});
             FillRect(renderer, row.rect, row_fill);
             DrawRect(renderer, row.rect, row_border);
 
@@ -1168,6 +1172,15 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
         }
     }
 
+    const auto current_target = CurrentTarget(targeting);
+    const bool preview_from_hover =
+        state.hovered_target_index >= 0 &&
+        state.hovered_target_index < static_cast<int>(targeting.windows.size());
+    const auto preview_target =
+        preview_from_hover
+            ? std::optional<framewatch::DesktopWindowInfo>{
+                  targeting.windows[static_cast<std::size_t>(state.hovered_target_index)]}
+            : current_target;
     const int info_y = layout.target_list_rect.y + layout.target_list_rect.h + 16;
     DrawText(renderer,
              layout.panel_rect.x + 18,
@@ -1181,11 +1194,50 @@ void DrawSettingsOverlay(SDL_Renderer* renderer,
              info_y + 18,
              1,
              palette.text_muted,
-             std::string("VISIBLE TARGETS ") + std::to_string(targeting.windows.size()) +
-                 "  WHEEL/PAGE TO SCROLL");
+             preview_target.has_value()
+                 ? std::string(preview_from_hover ? "HOVER " : "SELECTED ") +
+                       SanitizeUiText(TargetLabel(*preview_target), 38)
+                 : "SELECTED NONE  UP/DOWN/HOME/END TO MOVE");
     DrawText(renderer,
              layout.panel_rect.x + 18,
              info_y + 36,
+             1,
+             palette.text_muted,
+             preview_target.has_value()
+                 ? std::string("OWNER ") +
+                       SanitizeUiText(preview_target->owner_name.empty()
+                                          ? std::string("UNKNOWN")
+                                          : preview_target->owner_name,
+                                      42)
+                 : std::string("VISIBLE TARGETS ") + std::to_string(targeting.windows.size()) +
+                       "  WHEEL/PAGE TO SCROLL");
+    DrawText(renderer,
+             layout.panel_rect.x + 18,
+             info_y + 54,
+             1,
+             palette.text_muted,
+             preview_target.has_value()
+                 ? std::string("TITLE ") +
+                       SanitizeUiText(preview_target->title.empty()
+                                          ? std::string("UNTITLED")
+                                          : preview_target->title,
+                                      42)
+                 : "CLICK ROW TO LOCK  TAB/ARROWS TO NAVIGATE");
+    DrawText(renderer,
+             layout.panel_rect.x + 18,
+             info_y + 72,
+             1,
+             palette.text_muted,
+             preview_target.has_value()
+                 ? std::string("BOUNDS ") + std::to_string(preview_target->x) + "," +
+                       std::to_string(preview_target->y) + "  " +
+                       std::to_string(preview_target->width) + "X" +
+                       std::to_string(preview_target->height) + "  ID " +
+                       std::to_string(preview_target->id)
+                 : std::string("FILE ") + SanitizeUiText(settings_path.string(), 52));
+    DrawText(renderer,
+             layout.panel_rect.x + 18,
+             info_y + 90,
              1,
              palette.text_muted,
              std::string("FILE ") + SanitizeUiText(settings_path.string(), 52));
@@ -1205,7 +1257,7 @@ void DrawFooter(SDL_Renderer* renderer,
              rect.y + 6,
              1,
              palette.text_muted,
-             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  S SETTINGS  T QUERY  TAB CYCLE\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  PG/WHEEL LIST  ESC QUIT");
+             "SPACE PAUSE  B BENCH  R RESET  E EXPORT  S SETTINGS  T QUERY  TAB/ARROWS TARGET\nG FRONT  F FOLLOW  N CLEAR  C DOCK  [ ] OPACITY  V GRAPH  I SIDE  PG/WHEEL LIST  ESC QUIT");
 
     const SDL_Color status_color =
         (state.status_until > SteadyClock::now()) ? palette.accent : palette.text_muted;
@@ -1358,6 +1410,10 @@ int RunWindow(const AppOptions& options) {
                                       state.target_list_start_index);
     };
 
+    auto clear_hovered_target = [&]() {
+        state.hovered_target_index = -1;
+    };
+
     auto ensure_selected_target_visible = [&]() {
         const int visible_rows = settings_visible_rows();
         if (targeting.selected_index >= 0) {
@@ -1433,6 +1489,7 @@ int RunWindow(const AppOptions& options) {
         targeting.title_query = TrimWhitespace(query);
         targeting.selected_index = -1;
         RefreshTargets(targeting, kSelfTitleMarker);
+        clear_hovered_target();
         if (stop_edit_mode) {
             stop_target_query_edit();
         }
@@ -1464,6 +1521,7 @@ int RunWindow(const AppOptions& options) {
 
     auto clear_target_query = [&]() {
         stop_target_query_edit();
+        clear_hovered_target();
         targeting.title_query.clear();
         targeting.selected_index = -1;
         state.target_list_start_index = 0;
@@ -1478,11 +1536,37 @@ int RunWindow(const AppOptions& options) {
         }
 
         targeting.selected_index = window_index;
+        state.hovered_target_index = window_index;
         targeting.title_query =
             TargetQueryForPersistence(targeting.windows[static_cast<std::size_t>(window_index)]);
         ensure_selected_target_visible();
         SetStatus(state, "TARGET SELECTED", std::chrono::seconds(2));
         persist_overlay_settings();
+    };
+
+    auto select_target_delta = [&](int direction) {
+        if (targeting.windows.empty()) {
+            SetStatus(state, "NO TARGET AVAILABLE", std::chrono::seconds(2));
+            return;
+        }
+
+        const int current_index = targeting.selected_index;
+        const int next_index =
+            (current_index < 0)
+                ? (direction >= 0 ? 0 : static_cast<int>(targeting.windows.size()) - 1)
+                : std::clamp(current_index + direction,
+                             0,
+                             static_cast<int>(targeting.windows.size()) - 1);
+        select_target_row(next_index);
+    };
+
+    auto select_target_edge = [&](bool select_last) {
+        if (targeting.windows.empty()) {
+            SetStatus(state, "NO TARGET AVAILABLE", std::chrono::seconds(2));
+            return;
+        }
+
+        select_target_row(select_last ? static_cast<int>(targeting.windows.size()) - 1 : 0);
     };
 
     auto perform_settings_action = [&](SettingsPanelAction action) {
@@ -1543,8 +1627,9 @@ int RunWindow(const AppOptions& options) {
                 RefreshTargets(targeting, kSelfTitleMarker);
                 CycleTarget(targeting, 1);
                 if (const auto target = CurrentTarget(targeting)) {
-                    targeting.title_query = TargetQueryForPersistence(*target);
+                targeting.title_query = TargetQueryForPersistence(*target);
                 }
+                clear_hovered_target();
                 ensure_selected_target_visible();
                 SetStatus(state,
                           CurrentTarget(targeting).has_value() ? "TARGET CHANGED"
@@ -1557,6 +1642,7 @@ int RunWindow(const AppOptions& options) {
                 if (const auto target = CurrentTarget(targeting)) {
                     targeting.title_query = TargetQueryForPersistence(*target);
                 }
+                clear_hovered_target();
                 ensure_selected_target_visible();
                 SetStatus(state,
                           CurrentTarget(targeting).has_value() ? "FRONTMOST TARGET LOCKED"
@@ -1573,6 +1659,7 @@ int RunWindow(const AppOptions& options) {
                 targeting.title_query = overlay_settings.target_window_query;
                 targeting.selected_index = -1;
                 state.target_list_start_index = 0;
+                clear_hovered_target();
                 SDL_SetWindowSize(window,
                                   overlay_settings.window_width,
                                   overlay_settings.window_height);
@@ -1614,6 +1701,26 @@ int RunWindow(const AppOptions& options) {
                 if (PointInRect(mouse_x, mouse_y, layout.target_list_rect)) {
                     scroll_target_list(-event.wheel.y);
                 }
+            } else if (event.type == SDL_MOUSEMOTION && state.show_settings_panel &&
+                       !state.editing_target_query) {
+                int width = 0;
+                int height = 0;
+                SDL_GetRendererOutputSize(renderer, &width, &height);
+                const SettingsPanelLayout layout =
+                    BuildSettingsPanelLayout(width,
+                                             height,
+                                             overlay_settings,
+                                             targeting,
+                                             state.target_list_start_index);
+                state.hovered_target_index = -1;
+                if (PointInRect(event.motion.x, event.motion.y, layout.target_list_rect)) {
+                    for (const SettingsPanelTargetRow& row : layout.target_rows) {
+                        if (PointInRect(event.motion.x, event.motion.y, row.rect)) {
+                            state.hovered_target_index = row.window_index;
+                            break;
+                        }
+                    }
+                }
             } else if (event.type == SDL_MOUSEBUTTONDOWN && event.button.button == SDL_BUTTON_LEFT &&
                        state.show_settings_panel) {
                 int width = 0;
@@ -1632,6 +1739,7 @@ int RunWindow(const AppOptions& options) {
                     if (state.editing_target_query) {
                         cancel_target_query_edit();
                     }
+                    clear_hovered_target();
                     state.show_settings_panel = false;
                     SetStatus(state, "SETTINGS PANEL CLOSED", std::chrono::seconds(2));
                 } else if (PointInRect(mouse_x, mouse_y, layout.query_rect)) {
@@ -1705,6 +1813,7 @@ int RunWindow(const AppOptions& options) {
                 switch (event.key.keysym.sym) {
                     case SDLK_ESCAPE:
                         if (state.show_settings_panel) {
+                            clear_hovered_target();
                             state.show_settings_panel = false;
                             SetStatus(state, "SETTINGS PANEL CLOSED", std::chrono::seconds(2));
                         } else {
@@ -1712,6 +1821,9 @@ int RunWindow(const AppOptions& options) {
                         }
                         break;
                     case SDLK_s:
+                        if (state.show_settings_panel) {
+                            clear_hovered_target();
+                        }
                         state.show_settings_panel = !state.show_settings_panel;
                         SetStatus(state,
                                   state.show_settings_panel ? "SETTINGS PANEL OPEN"
@@ -1720,6 +1832,26 @@ int RunWindow(const AppOptions& options) {
                         break;
                     case SDLK_t:
                         begin_target_query_edit();
+                        break;
+                    case SDLK_UP:
+                        if (state.show_settings_panel) {
+                            select_target_delta(-1);
+                        }
+                        break;
+                    case SDLK_DOWN:
+                        if (state.show_settings_panel) {
+                            select_target_delta(1);
+                        }
+                        break;
+                    case SDLK_HOME:
+                        if (state.show_settings_panel) {
+                            select_target_edge(false);
+                        }
+                        break;
+                    case SDLK_END:
+                        if (state.show_settings_panel) {
+                            select_target_edge(true);
+                        }
                         break;
                     case SDLK_PAGEUP:
                         if (state.show_settings_panel) {
@@ -1762,6 +1894,7 @@ int RunWindow(const AppOptions& options) {
                         if (const auto target = CurrentTarget(targeting)) {
                             targeting.title_query = TargetQueryForPersistence(*target);
                         }
+                        clear_hovered_target();
                         ensure_selected_target_visible();
                         SetStatus(state,
                                   CurrentTarget(targeting).has_value() ? "TARGET CHANGED"
@@ -1810,6 +1943,7 @@ int RunWindow(const AppOptions& options) {
 
         if ((now - state.last_target_refresh_at) >= std::chrono::milliseconds(750)) {
             RefreshTargets(targeting, kSelfTitleMarker);
+            clear_hovered_target();
             clamp_target_list_start();
             state.last_target_refresh_at = now;
         }

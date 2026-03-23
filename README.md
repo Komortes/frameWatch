@@ -93,6 +93,8 @@ Controls:
 - `I`: toggle the sidebar panels
 - `D`: reset overlay settings to defaults
 - `Tab` / `Shift+Tab`: cycle detected desktop windows
+- `Up` / `Down`: move target selection inside the settings-drawer list
+- `Home` / `End`: jump to the first or last target in the list
 - `PageUp` / `PageDown`: page the settings-drawer window list
 - `G`: lock onto the current frontmost target window
 - `F`: follow the selected target window
@@ -112,7 +114,7 @@ The settings JSON keeps the current overlay layout and target-window restore sta
 - last selected target query
 - window size and last position
 
-The debug window can also show a live settings drawer with `S`. The drawer is actionable: you can click its buttons, type a target filter, use `Apply` / `Clear` next to the query field, click a visible window row to lock onto it, and page long window lists with `PageUp` / `PageDown` or the mouse wheel.
+The debug window can also show a live settings drawer with `S`. The drawer is actionable: you can click its buttons, type a target filter, use `Apply` / `Clear` next to the query field, hover a visible window row to preview its details, click it to lock onto it, navigate the list with `Up` / `Down` / `Home` / `End`, and page long window lists with `PageUp` / `PageDown` or the mouse wheel.
 
 For a non-GUI verification run:
 
