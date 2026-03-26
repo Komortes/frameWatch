@@ -55,11 +55,15 @@ class RecordingOverlayRenderer final : public framewatch::OverlayRenderer {
         return true;
     }
 
-    void Render(const framewatch::OverlaySnapshot& snapshot,
-                const framewatch::PresentEvent& present_event) override {
+    framewatch::OverlayRenderActions Render(const framewatch::OverlaySnapshot& snapshot,
+                                            const framewatch::PresentEvent& present_event) override {
         ++render_calls;
         last_snapshot = snapshot;
         last_present = present_event;
+        if (render_calls <= static_cast<int>(actions_by_render.size())) {
+            return actions_by_render[static_cast<std::size_t>(render_calls - 1)];
+        }
+        return {};
     }
 
     void Shutdown() noexcept override { initialized = false; }
@@ -68,6 +72,7 @@ class RecordingOverlayRenderer final : public framewatch::OverlayRenderer {
     int render_calls{0};
     framewatch::OverlaySnapshot last_snapshot;
     framewatch::PresentEvent last_present;
+    std::vector<framewatch::OverlayRenderActions> actions_by_render;
 };
 
 class RecordingPresentHook final : public framewatch::PresentHook {
@@ -253,6 +258,8 @@ bool TestOverlayRuntimePresentFlow() {
     ok &= Expect(renderer_ptr->last_present.native_swap_chain ==
                      reinterpret_cast<void*>(kSwapChainTag),
                  "overlay runtime should forward native present context to the renderer");
+    ok &= Expect(renderer_ptr->last_snapshot.graph_label == std::string("LIVE GRAPH"),
+                 "overlay runtime should annotate the overlay snapshot with the graph label");
 
     runtime.StartBenchmark();
     framewatch::PresentEvent third_present = second_present;
@@ -272,6 +279,56 @@ bool TestOverlayRuntimePresentFlow() {
     runtime.Shutdown();
     ok &= Expect(!runtime.IsInitialized(), "runtime should report shutdown state");
     ok &= Expect(!renderer_ptr->initialized, "renderer shutdown should be called");
+    return ok;
+}
+
+bool TestOverlayRuntimeRendererActions() {
+    auto renderer = std::make_unique<RecordingOverlayRenderer>();
+    RecordingOverlayRenderer* renderer_ptr = renderer.get();
+    renderer_ptr->actions_by_render = {
+        framewatch::OverlayRenderActions{.toggle_benchmark = true},
+        framewatch::OverlayRenderActions{.toggle_benchmark = true, .export_requested = true},
+    };
+
+    framewatch::OverlayRuntime runtime(std::move(renderer), 128, 128);
+    const auto temp_dir = std::filesystem::temp_directory_path();
+    const auto csv_path = temp_dir / "framewatch_overlay_runtime_actions.csv";
+    const auto json_path = temp_dir / "framewatch_overlay_runtime_actions.json";
+    std::filesystem::remove(csv_path);
+    std::filesystem::remove(json_path);
+    runtime.SetExportPaths(csv_path, json_path);
+
+    bool ok = true;
+    ok &= Expect(runtime.Initialize(), "overlay runtime should initialize for action tests");
+
+    auto timestamp = framewatch::FrameClock::time_point{};
+    framewatch::PresentEvent present;
+    present.api = framewatch::GraphicsApi::Dx11;
+    present.native_swap_chain = reinterpret_cast<void*>(static_cast<std::uintptr_t>(0xD00D));
+    present.timestamp = timestamp;
+    runtime.OnPresent(present);
+
+    present.timestamp += std::chrono::milliseconds(16);
+    runtime.OnPresent(present);
+    ok &= Expect(runtime.Session().IsBenchmarkRecording(),
+                 "renderer actions should be able to toggle benchmark recording on");
+
+    present.timestamp += std::chrono::milliseconds(16);
+    runtime.OnPresent(present);
+    ok &= Expect(!runtime.Session().IsBenchmarkRecording(),
+                 "renderer actions should be able to stop benchmark recording");
+
+    const auto benchmark = runtime.Session().CurrentBenchmark();
+    ok &= Expect(benchmark.frame_count == 1,
+                 "benchmark actions should retain the frame captured while the benchmark was active");
+    ok &= Expect(std::filesystem::exists(csv_path),
+                 "renderer export action should emit the csv export");
+    ok &= Expect(std::filesystem::exists(json_path),
+                 "renderer export action should emit the json export");
+
+    std::filesystem::remove(csv_path);
+    std::filesystem::remove(json_path);
+    runtime.Shutdown();
     return ok;
 }
 
@@ -306,6 +363,7 @@ bool TestOverlaySettingsControls() {
 
 bool TestOverlaySettingsPersistence() {
     framewatch::OverlaySettings settings;
+    settings.show_overlay = false;
     settings.show_graph = false;
     settings.show_sidebar = false;
     settings.panel_opacity = 0.55;
@@ -328,6 +386,7 @@ bool TestOverlaySettingsPersistence() {
     const auto loaded = framewatch::LoadOverlaySettings(path);
     ok &= Expect(loaded.has_value(), "overlay settings should load from json");
     if (loaded.has_value()) {
+        ok &= Expect(!loaded->show_overlay, "loaded settings should preserve show_overlay");
         ok &= Expect(!loaded->show_graph, "loaded settings should preserve show_graph");
         ok &= Expect(!loaded->show_sidebar, "loaded settings should preserve show_sidebar");
         ok &= ExpectNear(loaded->panel_opacity,
@@ -405,6 +464,7 @@ int main() {
     ok &= TestRollingHistoryLimit();
     ok &= TestPerformanceSessionBenchmarkLifecycle();
     ok &= TestOverlayRuntimePresentFlow();
+    ok &= TestOverlayRuntimeRendererActions();
     ok &= TestOverlaySettingsControls();
     ok &= TestOverlaySettingsPersistence();
     ok &= TestHookOverlayServiceWiring();

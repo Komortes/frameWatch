@@ -15,6 +15,7 @@ enum class OverlayDockAnchor {
 };
 
 struct OverlaySettings {
+    bool show_overlay{true};
     bool show_graph{true};
     bool show_sidebar{true};
     double panel_opacity{0.86};

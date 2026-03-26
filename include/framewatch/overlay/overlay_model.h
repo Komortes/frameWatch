@@ -24,6 +24,7 @@ struct OverlaySnapshot {
     std::vector<OverlayGraphPoint> graph;
     double graph_min_ms{0.0};
     double graph_max_ms{0.0};
+    std::string graph_label;
 };
 
 class OverlayModel {

@@ -273,6 +273,9 @@ std::optional<OverlaySettings> LoadOverlaySettings(const std::filesystem::path& 
     }
 
     OverlaySettings settings;
+    if (const auto show_overlay = ExtractJsonBool(content, "show_overlay")) {
+        settings.show_overlay = *show_overlay;
+    }
     if (const auto show_graph = ExtractJsonBool(content, "show_graph")) {
         settings.show_graph = *show_graph;
     }
@@ -321,6 +324,7 @@ bool SaveOverlaySettings(const OverlaySettings& settings, const std::filesystem:
 
     output << std::boolalpha << std::fixed << std::setprecision(2);
     output << "{\n";
+    output << "  \"show_overlay\": " << settings.show_overlay << ",\n";
     output << "  \"show_graph\": " << settings.show_graph << ",\n";
     output << "  \"show_sidebar\": " << settings.show_sidebar << ",\n";
     output << "  \"panel_opacity\": " << settings.panel_opacity << ",\n";

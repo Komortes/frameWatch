@@ -1,5 +1,6 @@
 #pragma once
 
+#include <filesystem>
 #include <memory>
 
 #include "framewatch/overlay/overlay_renderer.h"
@@ -23,6 +24,8 @@ class OverlayRuntime {
     void StartBenchmark();
     void StopBenchmark();
     void ToggleBenchmark();
+    bool ExportSession() const;
+    void SetExportPaths(std::filesystem::path csv_path, std::filesystem::path json_path);
 
     PerformanceSession& Session() noexcept;
     const PerformanceSession& Session() const noexcept;
@@ -35,6 +38,8 @@ class OverlayRuntime {
     std::unique_ptr<OverlayRenderer> renderer_;
     PerformanceSession session_;
     OverlaySnapshot last_snapshot_;
+    std::filesystem::path csv_export_path_{"output/framewatch_overlay_hotkey.csv"};
+    std::filesystem::path json_export_path_{"output/framewatch_overlay_hotkey.json"};
     bool initialized_{false};
     bool has_snapshot_{false};
 };

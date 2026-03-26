@@ -7,7 +7,7 @@ This repository contains the initial MVP scaffold:
 - real-time metrics calculation
 - CSV/JSON export
 - overlay data model for FPS/frametime graph rendering
-- Windows-only DX11 hook extension point
+- Windows-only DX11 Present hook path
 
 ## Current scope
 
@@ -19,8 +19,8 @@ The core pipeline is already working end-to-end:
 4. propagate `Present` metadata through the hook/runtime/renderer path
 5. persist benchmark sessions to CSV/JSON
 
-The actual DX11 `Present` detour and Dear ImGui renderer are intentionally left as platform integration points.
-That keeps the repository buildable today while preserving the architecture needed for the real overlay/hook implementation.
+On Windows, the repository now includes a real DX11 `Present` detour path when `MinHook` is available at build time.
+The in-game renderer is no longer a pure stub: it now binds to the live swap chain, draws a lightweight geometry overlay with live stats and a frametime graph, and persists basic overlay settings between runs.
 
 ## Project layout
 
@@ -48,6 +48,12 @@ cmake --build build
 ctest --test-dir build --output-on-failure
 ```
 
+Windows DX11 detouring notes:
+
+- `FRAMEWATCH_ENABLE_DX11_HOOK=ON` builds the DX11 hook path.
+- If `MinHook` is installed, set `FRAMEWATCH_MINHOOK_ROOT=<path>` when needed.
+- Without `MinHook`, the DX11 backend still builds, but `PresentHook::Install()` stays disabled with a descriptive runtime error.
+
 ## Demo
 
 The `framewatch_demo` executable simulates a benchmark run, prints live-style summary stats, and exports:
@@ -67,6 +73,31 @@ Optional flags:
 --frames <count>
 --csv <path>
 --json <path>
+```
+
+On Windows, a second executable can validate the real DX11 hook/runtime path in-process:
+
+```bash
+./build/framewatch_dx11_hook_smoke
+```
+
+It creates a DX11 swap chain, installs the hook, issues live `Present` calls, and exports:
+
+- `output/framewatch_dx11_hook_smoke.csv`
+- `output/framewatch_dx11_hook_smoke.json`
+
+The smoke app also exercises the minimal in-process DX11 overlay renderer:
+
+- alpha-blended panel over the active back buffer
+- bitmap text for the main live stats
+- frametime polyline and frame-budget guide lines
+- persistent overlay settings in `output/framewatch_dx11_overlay_settings.json`
+- live hotkeys: `F2` benchmark toggle, `F3` export, `F6` overlay, `F7` graph, `F8` stats, `F9` dock, `F10` opacity down, `F11` opacity up
+
+If needed, the DX11 overlay settings path can be overridden with:
+
+```text
+FRAMEWATCH_DX11_OVERLAY_SETTINGS=<path>
 ```
 
 ## Debug Window
@@ -133,7 +164,7 @@ Targeting helpers:
 
 ## Next implementation steps
 
-- implement the real DX11 `Present` detour behind `PresentHook` and feed live `IDXGISwapChain*` into `PresentEvent`
-- bind `Dx11OverlayRendererWin` to swap chain/device resources and replace the no-op render path with actual draw calls
-- add runtime overlay settings and target-window aware positioning on Windows
+- add a Windows DLL/bootstrap path so the hook can be injected into external game processes
+- add session reset and richer in-game controls for the Windows overlay path
+- replace the geometry-only text path with a more ergonomic renderer layer such as Dear ImGui
 - add DX12/Vulkan backends behind the same session/runtime interfaces

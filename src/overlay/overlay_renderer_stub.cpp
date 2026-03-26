@@ -16,7 +16,7 @@ class NullOverlayRenderer final : public OverlayRenderer {
 
     bool Initialize() override { return true; }
 
-    void Render(const OverlaySnapshot&, const PresentEvent&) override {}
+    OverlayRenderActions Render(const OverlaySnapshot&, const PresentEvent&) override { return {}; }
 
     void Shutdown() noexcept override {}
 };

@@ -38,7 +38,14 @@ bool OverlayRuntime::OnPresent(const PresentEvent& present_event) {
     }
 
     last_snapshot_ = session_.GraphSnapshot();
-    renderer_->Render(last_snapshot_, present_event);
+    last_snapshot_.graph_label = session_.GraphLabel();
+    const OverlayRenderActions actions = renderer_->Render(last_snapshot_, present_event);
+    if (actions.toggle_benchmark) {
+        session_.ToggleBenchmark();
+    }
+    if (actions.export_requested) {
+        session_.ExportPreferred(csv_export_path_, json_export_path_);
+    }
     has_snapshot_ = true;
     return true;
 }
@@ -59,6 +66,16 @@ void OverlayRuntime::StopBenchmark() {
 
 void OverlayRuntime::ToggleBenchmark() {
     session_.ToggleBenchmark();
+}
+
+bool OverlayRuntime::ExportSession() const {
+    return session_.ExportPreferred(csv_export_path_, json_export_path_);
+}
+
+void OverlayRuntime::SetExportPaths(std::filesystem::path csv_path,
+                                    std::filesystem::path json_path) {
+    csv_export_path_ = std::move(csv_path);
+    json_export_path_ = std::move(json_path);
 }
 
 PerformanceSession& OverlayRuntime::Session() noexcept {
