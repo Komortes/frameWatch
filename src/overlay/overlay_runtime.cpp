@@ -2,6 +2,11 @@
 
 namespace framewatch {
 
+void OverlayRuntime::SetOverlayStatus(std::string message, int visible_frames) {
+    overlay_status_text_ = std::move(message);
+    overlay_status_frames_remaining_ = visible_frames;
+}
+
 OverlayRuntime::OverlayRuntime(std::unique_ptr<OverlayRenderer> renderer,
                                std::size_t live_history_limit,
                                std::size_t benchmark_history_limit)
@@ -39,12 +44,23 @@ bool OverlayRuntime::OnPresent(const PresentEvent& present_event) {
 
     last_snapshot_ = session_.GraphSnapshot();
     last_snapshot_.graph_label = session_.GraphLabel();
+    if (overlay_status_frames_remaining_ > 0) {
+        last_snapshot_.status_text = overlay_status_text_;
+        --overlay_status_frames_remaining_;
+        if (overlay_status_frames_remaining_ == 0) {
+            overlay_status_text_.clear();
+        }
+    }
     const OverlayRenderActions actions = renderer_->Render(last_snapshot_, present_event);
     if (actions.toggle_benchmark) {
-        session_.ToggleBenchmark();
+        ToggleBenchmark();
     }
     if (actions.export_requested) {
-        session_.ExportPreferred(csv_export_path_, json_export_path_);
+        ExportSession();
+    }
+    if (actions.reset_session) {
+        ResetSession();
+        return true;
     }
     has_snapshot_ = true;
     return true;
@@ -58,18 +74,33 @@ bool OverlayRuntime::OnPresent(FrameClock::time_point timestamp) {
 
 void OverlayRuntime::StartBenchmark() {
     session_.StartBenchmark();
+    SetOverlayStatus("BENCHMARK START");
 }
 
 void OverlayRuntime::StopBenchmark() {
     session_.StopBenchmark();
+    SetOverlayStatus("BENCHMARK STOP");
 }
 
 void OverlayRuntime::ToggleBenchmark() {
-    session_.ToggleBenchmark();
+    if (session_.IsBenchmarkRecording()) {
+        StopBenchmark();
+    } else {
+        StartBenchmark();
+    }
 }
 
-bool OverlayRuntime::ExportSession() const {
-    return session_.ExportPreferred(csv_export_path_, json_export_path_);
+void OverlayRuntime::ResetSession() {
+    session_.Reset();
+    last_snapshot_ = {};
+    has_snapshot_ = false;
+    SetOverlayStatus("SESSION RESET");
+}
+
+bool OverlayRuntime::ExportSession() {
+    const bool exported = session_.ExportPreferred(csv_export_path_, json_export_path_);
+    SetOverlayStatus(exported ? "EXPORT OK" : "EXPORT FAILED");
+    return exported;
 }
 
 void OverlayRuntime::SetExportPaths(std::filesystem::path csv_path,

@@ -11,6 +11,7 @@ namespace framewatch {
 struct OverlayRenderActions {
     bool toggle_benchmark{false};
     bool export_requested{false};
+    bool reset_session{false};
 };
 
 class OverlayRenderer {

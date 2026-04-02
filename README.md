@@ -92,7 +92,35 @@ The smoke app also exercises the minimal in-process DX11 overlay renderer:
 - bitmap text for the main live stats
 - frametime polyline and frame-budget guide lines
 - persistent overlay settings in `output/framewatch_dx11_overlay_settings.json`
-- live hotkeys: `F2` benchmark toggle, `F3` export, `F6` overlay, `F7` graph, `F8` stats, `F9` dock, `F10` opacity down, `F11` opacity up
+- live hotkeys: `F2` benchmark toggle, `F3` export, `F4` reset session, `F6` overlay, `F7` graph, `F8` stats, `F9` dock, `F10` opacity down, `F11` opacity up
+- runtime status feedback in the overlay footer for benchmark/export/reset actions
+
+The repository also includes a minimal external-process bootstrap path on Windows:
+
+- `framewatch_dx11_overlay.dll` boots `HookOverlayService` from `DllMain` on a worker thread
+- `framewatch_injector` injects that DLL with `LoadLibraryW`
+- bootstrap status is written to `output/framewatch_injected_status.txt` next to the DLL
+
+Examples:
+
+```bash
+./build/framewatch_injector --list-windows
+./build/framewatch_injector --window-title "Game Name"
+./build/framewatch_injector --pid 1234
+```
+
+Optional injector flags:
+
+```text
+--dll <path>
+--wait-ms <milliseconds>
+```
+
+Notes:
+
+- the injector currently supports injection only; it does not expose a separate unload/eject CLI yet
+- the injected DLL exports benchmark captures to `output/framewatch_injected_session.csv/json` next to the DLL
+- anti-cheat protected games may block the injector or the overlay DLL outright
 
 If needed, the DX11 overlay settings path can be overridden with:
 
@@ -164,7 +192,7 @@ Targeting helpers:
 
 ## Next implementation steps
 
-- add a Windows DLL/bootstrap path so the hook can be injected into external game processes
-- add session reset and richer in-game controls for the Windows overlay path
+- add a proper unload/eject path and process-architecture checks to the Windows injector
+- add richer in-game controls and a fuller overlay settings surface for the Windows path
 - replace the geometry-only text path with a more ergonomic renderer layer such as Dear ImGui
 - add DX12/Vulkan backends behind the same session/runtime interfaces

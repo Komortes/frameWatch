@@ -4,6 +4,7 @@ project(FrameWatchMini VERSION 0.1.0 LANGUAGES CXX)
 
 option(FRAMEWATCH_ENABLE_DX11_HOOK "Build the DX11 hook scaffold on Windows" ON)
 option(FRAMEWATCH_ENABLE_MINHOOK "Enable MinHook-backed DX11 Present detouring when MinHook is available" ON)
+option(FRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP "Build the injected DX11 overlay DLL and injector on Windows" ON)
 option(FRAMEWATCH_BUILD_DEMO "Build the CLI MVP demo" ON)
 option(FRAMEWATCH_BUILD_DEBUG_WINDOW "Build the SDL2 debug window if SDL2 is available" ON)
 option(FRAMEWATCH_BUILD_TESTS "Build unit tests" ON)
@@ -42,12 +43,32 @@ if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)
     target_sources(framewatch_core PRIVATE
         src/hooks/dx11/dx11_present_hook_win.cpp
         src/overlay/dx11/dx11_overlay_renderer_win.cpp
+        third_party/imgui/imgui.cpp
+        third_party/imgui/imgui_draw.cpp
+        third_party/imgui/imgui_tables.cpp
+        third_party/imgui/imgui_widgets.cpp
+        third_party/imgui/backends/imgui_impl_dx11.cpp
+    )
+    target_include_directories(framewatch_core PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party/imgui/backends
     )
     target_compile_definitions(framewatch_core PRIVATE
         FRAMEWATCH_HAS_DX11_HOOK=1
         FRAMEWATCH_HAS_DX11_OVERLAY=1
     )
     target_link_libraries(framewatch_core PUBLIC d3d11 dxgi d3dcompiler)
+
+    if(MSVC)
+        set_source_files_properties(
+            third_party/imgui/imgui.cpp
+            third_party/imgui/imgui_draw.cpp
+            third_party/imgui/imgui_tables.cpp
+            third_party/imgui/imgui_widgets.cpp
+            third_party/imgui/backends/imgui_impl_dx11.cpp
+            PROPERTIES COMPILE_OPTIONS "/W0"
+        )
+    endif()
 
     if(FRAMEWATCH_ENABLE_MINHOOK)
         find_path(FRAMEWATCH_MINHOOK_INCLUDE_DIR
@@ -93,6 +114,19 @@ if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)
     add_executable(framewatch_dx11_hook_smoke src/app/dx11_hook_smoke_win.cpp)
     target_link_libraries(framewatch_dx11_hook_smoke PRIVATE framewatch_core d3d11 dxgi d3dcompiler)
     target_compile_features(framewatch_dx11_hook_smoke PRIVATE cxx_std_20)
+
+    if(FRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP)
+        add_library(framewatch_dx11_overlay SHARED src/bootstrap/injected_runtime_win.cpp)
+        target_link_libraries(framewatch_dx11_overlay PRIVATE framewatch_core)
+        target_include_directories(framewatch_dx11_overlay PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_compile_definitions(framewatch_dx11_overlay PRIVATE FRAMEWATCH_BUILD_INJECTED_RUNTIME=1)
+        target_compile_features(framewatch_dx11_overlay PRIVATE cxx_std_20)
+
+        add_executable(framewatch_injector src/app/framewatch_injector_win.cpp)
+        target_include_directories(framewatch_injector PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
+        target_link_libraries(framewatch_injector PRIVATE user32)
+        target_compile_features(framewatch_injector PRIVATE cxx_std_20)
+    endif()
 endif()
 
 set(FRAMEWATCH_SDL2_TARGET "")

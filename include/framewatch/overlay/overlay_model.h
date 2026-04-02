@@ -25,6 +25,7 @@ struct OverlaySnapshot {
     double graph_min_ms{0.0};
     double graph_max_ms{0.0};
     std::string graph_label;
+    std::string status_text;
 };
 
 class OverlayModel {

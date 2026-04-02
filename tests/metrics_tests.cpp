@@ -288,6 +288,7 @@ bool TestOverlayRuntimeRendererActions() {
     renderer_ptr->actions_by_render = {
         framewatch::OverlayRenderActions{.toggle_benchmark = true},
         framewatch::OverlayRenderActions{.toggle_benchmark = true, .export_requested = true},
+        framewatch::OverlayRenderActions{.reset_session = true},
     };
 
     framewatch::OverlayRuntime runtime(std::move(renderer), 128, 128);
@@ -317,6 +318,8 @@ bool TestOverlayRuntimeRendererActions() {
     runtime.OnPresent(present);
     ok &= Expect(!runtime.Session().IsBenchmarkRecording(),
                  "renderer actions should be able to stop benchmark recording");
+    ok &= Expect(renderer_ptr->last_snapshot.status_text == std::string("BENCHMARK START"),
+                 "the next rendered snapshot should expose benchmark-start status feedback");
 
     const auto benchmark = runtime.Session().CurrentBenchmark();
     ok &= Expect(benchmark.frame_count == 1,
@@ -325,6 +328,26 @@ bool TestOverlayRuntimeRendererActions() {
                  "renderer export action should emit the csv export");
     ok &= Expect(std::filesystem::exists(json_path),
                  "renderer export action should emit the json export");
+
+    present.timestamp += std::chrono::milliseconds(16);
+    runtime.OnPresent(present);
+    ok &= Expect(renderer_ptr->last_snapshot.status_text == std::string("EXPORT OK"),
+                 "the next rendered snapshot should expose export status feedback");
+    ok &= Expect(runtime.Session().LiveSampleCount() == 0,
+                 "renderer reset action should clear the live session");
+    ok &= Expect(runtime.LastSnapshot() == nullptr,
+                 "renderer reset action should clear the cached overlay snapshot");
+    ok &= Expect(!runtime.Session().IsBenchmarkRecording(),
+                 "renderer reset action should leave benchmark recording disabled");
+
+    present.timestamp += std::chrono::milliseconds(16);
+    ok &= Expect(!runtime.OnPresent(present),
+                 "the first present after a reset should re-prime frametime tracking");
+    present.timestamp += std::chrono::milliseconds(16);
+    ok &= Expect(runtime.OnPresent(present),
+                 "the second present after a reset should render again");
+    ok &= Expect(renderer_ptr->last_snapshot.status_text == std::string("SESSION RESET"),
+                 "the next rendered snapshot should expose session-reset status feedback");
 
     std::filesystem::remove(csv_path);
     std::filesystem::remove(json_path);

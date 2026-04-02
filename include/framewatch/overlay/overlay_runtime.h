@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <string>
 
 #include "framewatch/overlay/overlay_renderer.h"
 #include "framewatch/session/performance_session.h"
@@ -24,7 +25,8 @@ class OverlayRuntime {
     void StartBenchmark();
     void StopBenchmark();
     void ToggleBenchmark();
-    bool ExportSession() const;
+    void ResetSession();
+    bool ExportSession();
     void SetExportPaths(std::filesystem::path csv_path, std::filesystem::path json_path);
 
     PerformanceSession& Session() noexcept;
@@ -35,11 +37,15 @@ class OverlayRuntime {
     std::string_view RendererDescription() const noexcept;
 
   private:
+    void SetOverlayStatus(std::string message, int visible_frames = 180);
+
     std::unique_ptr<OverlayRenderer> renderer_;
     PerformanceSession session_;
     OverlaySnapshot last_snapshot_;
     std::filesystem::path csv_export_path_{"output/framewatch_overlay_hotkey.csv"};
     std::filesystem::path json_export_path_{"output/framewatch_overlay_hotkey.json"};
+    std::string overlay_status_text_;
+    int overlay_status_frames_remaining_{0};
     bool initialized_{false};
     bool has_snapshot_{false};
 };
