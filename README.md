@@ -92,13 +92,15 @@ The smoke app also exercises the minimal in-process DX11 overlay renderer:
 - bitmap text for the main live stats
 - frametime polyline and frame-budget guide lines
 - persistent overlay settings in `output/framewatch_dx11_overlay_settings.json`
-- live hotkeys: `F2` benchmark toggle, `F3` export, `F4` reset session, `F6` overlay, `F7` graph, `F8` stats, `F9` dock, `F10` opacity down, `F11` opacity up
+- live hotkeys: `F1` panel, `F2` benchmark toggle, `F3` export, `F4` reset session, `F5` compact mode, `F6` overlay, `F7` graph, `F8` stats, `F9` dock, `F10` opacity down, `F11` opacity up, `F12` hints
 - runtime status feedback in the overlay footer for benchmark/export/reset actions
+- persistent in-game flags for compact mode, settings panel visibility and hotkey hints
 
 The repository also includes a minimal external-process bootstrap path on Windows:
 
 - `framewatch_dx11_overlay.dll` boots `HookOverlayService` from `DllMain` on a worker thread
 - `framewatch_injector` injects that DLL with `LoadLibraryW`
+- `framewatch_injector --eject` asks the injected runtime to detach and unload
 - bootstrap status is written to `output/framewatch_injected_status.txt` next to the DLL
 
 Examples:
@@ -107,6 +109,7 @@ Examples:
 ./build/framewatch_injector --list-windows
 ./build/framewatch_injector --window-title "Game Name"
 ./build/framewatch_injector --pid 1234
+./build/framewatch_injector --eject --window-title "Game Name"
 ```
 
 Optional injector flags:
@@ -118,7 +121,7 @@ Optional injector flags:
 
 Notes:
 
-- the injector currently supports injection only; it does not expose a separate unload/eject CLI yet
+- injector/eject expects the target process and the DLL to match bitness
 - the injected DLL exports benchmark captures to `output/framewatch_injected_session.csv/json` next to the DLL
 - anti-cheat protected games may block the injector or the overlay DLL outright
 
@@ -192,7 +195,6 @@ Targeting helpers:
 
 ## Next implementation steps
 
-- add a proper unload/eject path and process-architecture checks to the Windows injector
-- add richer in-game controls and a fuller overlay settings surface for the Windows path
-- replace the geometry-only text path with a more ergonomic renderer layer such as Dear ImGui
+- add actual input-routing for the DX11 overlay if we want clickable in-game controls instead of hotkey-only controls
+- make the Windows injector verify target module presence/status more explicitly before injection
 - add DX12/Vulkan backends behind the same session/runtime interfaces

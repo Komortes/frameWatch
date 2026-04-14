@@ -389,6 +389,9 @@ bool TestOverlaySettingsPersistence() {
     settings.show_overlay = false;
     settings.show_graph = false;
     settings.show_sidebar = false;
+    settings.show_hotkey_hints = false;
+    settings.show_settings_panel = true;
+    settings.compact_mode = true;
     settings.panel_opacity = 0.55;
     settings.dock_anchor = framewatch::OverlayDockAnchor::LeftTop;
     settings.follow_target_window = true;
@@ -412,6 +415,12 @@ bool TestOverlaySettingsPersistence() {
         ok &= Expect(!loaded->show_overlay, "loaded settings should preserve show_overlay");
         ok &= Expect(!loaded->show_graph, "loaded settings should preserve show_graph");
         ok &= Expect(!loaded->show_sidebar, "loaded settings should preserve show_sidebar");
+        ok &= Expect(!loaded->show_hotkey_hints,
+                     "loaded settings should preserve show_hotkey_hints");
+        ok &= Expect(loaded->show_settings_panel,
+                     "loaded settings should preserve show_settings_panel");
+        ok &= Expect(loaded->compact_mode,
+                     "loaded settings should preserve compact_mode");
         ok &= ExpectNear(loaded->panel_opacity,
                          0.55,
                          0.0001,

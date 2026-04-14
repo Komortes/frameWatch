@@ -18,6 +18,9 @@ struct OverlaySettings {
     bool show_overlay{true};
     bool show_graph{true};
     bool show_sidebar{true};
+    bool show_hotkey_hints{true};
+    bool show_settings_panel{false};
+    bool compact_mode{false};
     double panel_opacity{0.86};
     OverlayDockAnchor dock_anchor{OverlayDockAnchor::RightTop};
     bool follow_target_window{false};

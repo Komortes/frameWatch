@@ -54,7 +54,7 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
 
         initialized_ = true;
         description_ =
-            "ImGui DX11 overlay initialized. F2/F3/F4/F6/F7/F8/F9/F10/F11 control the overlay.";
+            "ImGui DX11 overlay initialized. F1/F2/F3/F4/F5/F6/F7/F8/F9/F10/F11/F12 control the overlay.";
         return true;
     }
 
@@ -131,6 +131,10 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
 
     OverlayRenderActions HandleHotkeys() {
         OverlayRenderActions actions;
+        if (ConsumeHotkeyPress(VK_F1, hotkey_show_settings_panel_down_)) {
+            settings_.show_settings_panel = !settings_.show_settings_panel;
+            settings_dirty_ = true;
+        }
         if (ConsumeHotkeyPress(VK_F6, hotkey_show_overlay_down_)) {
             settings_.show_overlay = !settings_.show_overlay;
             settings_dirty_ = true;
@@ -143,6 +147,10 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
         }
         if (ConsumeHotkeyPress(VK_F4, hotkey_reset_session_down_)) {
             actions.reset_session = true;
+        }
+        if (ConsumeHotkeyPress(VK_F5, hotkey_compact_mode_down_)) {
+            settings_.compact_mode = !settings_.compact_mode;
+            settings_dirty_ = true;
         }
         if (ConsumeHotkeyPress(VK_F7, hotkey_show_graph_down_)) {
             settings_.show_graph = !settings_.show_graph;
@@ -162,6 +170,10 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
         }
         if (ConsumeHotkeyPress(VK_F11, hotkey_opacity_up_)) {
             AdjustOverlayOpacity(settings_, 0.08);
+            settings_dirty_ = true;
+        }
+        if (ConsumeHotkeyPress(VK_F12, hotkey_show_hints_down_)) {
+            settings_.show_hotkey_hints = !settings_.show_hotkey_hints;
             settings_dirty_ = true;
         }
         return actions;
@@ -266,11 +278,13 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
     }
 
     void RenderOverlayWindow(const OverlaySnapshot& snapshot) {
-        constexpr float kPanelWidth = 240.0f;
-        const ImVec2 pos = ComputeWindowPos(kPanelWidth, last_panel_height_);
+        const float panel_width = settings_.show_settings_panel ? 320.0f : 240.0f;
+        const float panel_height_guess = settings_.show_settings_panel ? last_panel_height_ + 72.0f
+                                                                       : last_panel_height_;
+        const ImVec2 pos = ComputeWindowPos(panel_width, panel_height_guess);
 
         ImGui::SetNextWindowPos(pos, ImGuiCond_Always);
-        ImGui::SetNextWindowSize({kPanelWidth, 0.0f}, ImGuiCond_Always);
+        ImGui::SetNextWindowSize({panel_width, 0.0f}, ImGuiCond_Always);
         ImGui::SetNextWindowBgAlpha(static_cast<float>(settings_.panel_opacity));
 
         constexpr ImGuiWindowFlags kFlags =
@@ -284,13 +298,24 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
             ImGui::TextColored({1.0f, 1.0f, 0.0f, 1.0f}, "%s", snapshot.status_text.c_str());
         }
 
-        if (settings_.show_sidebar && !snapshot.stats.empty()) {
+        if (settings_.compact_mode) {
+            if (!snapshot.stats.empty()) {
+                ImGui::Text("%s %s",
+                            snapshot.stats.front().label.c_str(),
+                            snapshot.stats.front().value.c_str());
+            }
+            if (snapshot.stats.size() > 4) {
+                ImGui::Text("%s %s",
+                            snapshot.stats[4].label.c_str(),
+                            snapshot.stats[4].value.c_str());
+            }
+        } else if (settings_.show_sidebar && !snapshot.stats.empty()) {
             for (const auto& stat : snapshot.stats) {
                 ImGui::Text("%-12s %s", stat.label.c_str(), stat.value.c_str());
             }
         }
 
-        if (settings_.show_graph && !snapshot.graph.empty()) {
+        if (!settings_.compact_mode && settings_.show_graph && !snapshot.graph.empty()) {
             std::vector<float> values;
             values.reserve(snapshot.graph.size());
             for (const auto& pt : snapshot.graph) {
@@ -306,12 +331,29 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
                              nullptr,
                              0.0f,
                              max_ms,
-                             {kPanelWidth - 16.0f, 60.0f});
+                             {panel_width - 16.0f, settings_.show_settings_panel ? 72.0f : 60.0f});
         }
 
-        ImGui::SetWindowFontScale(0.75f);
-        ImGui::TextDisabled("F2 BENCH  F3 SAVE  F4 RST  F6 OVR  F9 DOCK");
-        ImGui::SetWindowFontScale(1.0f);
+        if (settings_.show_settings_panel) {
+            ImGui::Separator();
+            ImGui::TextDisabled("OVERLAY");
+            const int opacity_percent =
+                static_cast<int>(ClampOverlayOpacity(settings_.panel_opacity) * 100.0);
+            ImGui::Text("Dock: %s", std::string(OverlayDockAnchorName(settings_.dock_anchor)).c_str());
+            ImGui::Text("Opacity: %d%%", opacity_percent);
+            ImGui::Text("Graph: %s", settings_.show_graph ? "ON" : "OFF");
+            ImGui::Text("Stats: %s", settings_.show_sidebar ? "ON" : "OFF");
+            ImGui::Text("Compact: %s", settings_.compact_mode ? "ON" : "OFF");
+            ImGui::Text("Hints: %s", settings_.show_hotkey_hints ? "ON" : "OFF");
+            ImGui::Text("Source: %s", snapshot.graph_label.c_str());
+        }
+
+        if (settings_.show_hotkey_hints) {
+            ImGui::SetWindowFontScale(0.75f);
+            ImGui::TextDisabled("F1 PANEL  F2 BENCH  F3 SAVE  F4 RST  F5 COMPACT");
+            ImGui::TextDisabled("F6 OVR  F7 GRAPH  F8 STATS  F9 DOCK  F10/F11 OPACITY  F12 HINTS");
+            ImGui::SetWindowFontScale(1.0f);
+        }
 
         last_panel_height_ = ImGui::GetWindowHeight();
         ImGui::End();
@@ -349,12 +391,15 @@ class Dx11ImGuiOverlayRendererWin final : public OverlayRenderer {
     bool hotkey_benchmark_down_{false};
     bool hotkey_export_down_{false};
     bool hotkey_reset_session_down_{false};
+    bool hotkey_show_settings_panel_down_{false};
+    bool hotkey_compact_mode_down_{false};
     bool hotkey_show_overlay_down_{false};
     bool hotkey_show_graph_down_{false};
     bool hotkey_show_sidebar_down_{false};
     bool hotkey_dock_anchor_down_{false};
     bool hotkey_opacity_down_{false};
     bool hotkey_opacity_up_{false};
+    bool hotkey_show_hints_down_{false};
     std::uint64_t rendered_frames_{0};
     IDXGISwapChain* bound_swap_chain_{nullptr};
     ID3D11Device* device_{nullptr};

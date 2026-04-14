@@ -282,6 +282,15 @@ std::optional<OverlaySettings> LoadOverlaySettings(const std::filesystem::path& 
     if (const auto show_sidebar = ExtractJsonBool(content, "show_sidebar")) {
         settings.show_sidebar = *show_sidebar;
     }
+    if (const auto show_hotkey_hints = ExtractJsonBool(content, "show_hotkey_hints")) {
+        settings.show_hotkey_hints = *show_hotkey_hints;
+    }
+    if (const auto show_settings_panel = ExtractJsonBool(content, "show_settings_panel")) {
+        settings.show_settings_panel = *show_settings_panel;
+    }
+    if (const auto compact_mode = ExtractJsonBool(content, "compact_mode")) {
+        settings.compact_mode = *compact_mode;
+    }
     if (const auto panel_opacity = ExtractJsonNumber(content, "panel_opacity")) {
         settings.panel_opacity = ClampOverlayOpacity(*panel_opacity);
     }
@@ -327,6 +336,9 @@ bool SaveOverlaySettings(const OverlaySettings& settings, const std::filesystem:
     output << "  \"show_overlay\": " << settings.show_overlay << ",\n";
     output << "  \"show_graph\": " << settings.show_graph << ",\n";
     output << "  \"show_sidebar\": " << settings.show_sidebar << ",\n";
+    output << "  \"show_hotkey_hints\": " << settings.show_hotkey_hints << ",\n";
+    output << "  \"show_settings_panel\": " << settings.show_settings_panel << ",\n";
+    output << "  \"compact_mode\": " << settings.compact_mode << ",\n";
     output << "  \"panel_opacity\": " << settings.panel_opacity << ",\n";
     output << "  \"dock_anchor\": \"" << OverlayDockAnchorName(settings.dock_anchor) << "\",\n";
     output << "  \"follow_target_window\": " << settings.follow_target_window << ",\n";
