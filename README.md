@@ -95,6 +95,8 @@ The smoke app also exercises the minimal in-process DX11 overlay renderer:
 - live hotkeys: `F1` panel, `F2` benchmark toggle, `F3` export, `F4` reset session, `F5` compact mode, `F6` overlay, `F7` graph, `F8` stats, `F9` dock, `F10` opacity down, `F11` opacity up, `F12` hints
 - runtime status feedback in the overlay footer for benchmark/export/reset actions
 - persistent in-game flags for compact mode, settings panel visibility and hotkey hints
+- mouse-routed clickable controls in the `F1` panel (benchmark/export/reset, graph/stats/compact/hints, dock, opacity)
+- WndProc-routed input events for mouse, wheel, keyboard, and text input (`WM_CHAR`) with optional capture/forward policy via `Capture Input`
 
 The repository also includes a minimal external-process bootstrap path on Windows:
 
@@ -195,6 +197,6 @@ Targeting helpers:
 
 ## Next implementation steps
 
-- add actual input-routing for the DX11 overlay if we want clickable in-game controls instead of hotkey-only controls
+- harden WndProc input routing for edge cases (IME/dead keys, focus-loss cleanup, and raw-input coexistence)
 - make the Windows injector verify target module presence/status more explicitly before injection
 - add DX12/Vulkan backends behind the same session/runtime interfaces

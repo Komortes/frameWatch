@@ -288,6 +288,9 @@ std::optional<OverlaySettings> LoadOverlaySettings(const std::filesystem::path& 
     if (const auto show_settings_panel = ExtractJsonBool(content, "show_settings_panel")) {
         settings.show_settings_panel = *show_settings_panel;
     }
+    if (const auto capture_input = ExtractJsonBool(content, "capture_input_when_panel_open")) {
+        settings.capture_input_when_panel_open = *capture_input;
+    }
     if (const auto compact_mode = ExtractJsonBool(content, "compact_mode")) {
         settings.compact_mode = *compact_mode;
     }
@@ -338,6 +341,8 @@ bool SaveOverlaySettings(const OverlaySettings& settings, const std::filesystem:
     output << "  \"show_sidebar\": " << settings.show_sidebar << ",\n";
     output << "  \"show_hotkey_hints\": " << settings.show_hotkey_hints << ",\n";
     output << "  \"show_settings_panel\": " << settings.show_settings_panel << ",\n";
+    output << "  \"capture_input_when_panel_open\": " << settings.capture_input_when_panel_open
+           << ",\n";
     output << "  \"compact_mode\": " << settings.compact_mode << ",\n";
     output << "  \"panel_opacity\": " << settings.panel_opacity << ",\n";
     output << "  \"dock_anchor\": \"" << OverlayDockAnchorName(settings.dock_anchor) << "\",\n";

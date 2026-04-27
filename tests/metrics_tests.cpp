@@ -391,6 +391,7 @@ bool TestOverlaySettingsPersistence() {
     settings.show_sidebar = false;
     settings.show_hotkey_hints = false;
     settings.show_settings_panel = true;
+    settings.capture_input_when_panel_open = true;
     settings.compact_mode = true;
     settings.panel_opacity = 0.55;
     settings.dock_anchor = framewatch::OverlayDockAnchor::LeftTop;
@@ -419,6 +420,8 @@ bool TestOverlaySettingsPersistence() {
                      "loaded settings should preserve show_hotkey_hints");
         ok &= Expect(loaded->show_settings_panel,
                      "loaded settings should preserve show_settings_panel");
+        ok &= Expect(loaded->capture_input_when_panel_open,
+                     "loaded settings should preserve capture_input_when_panel_open");
         ok &= Expect(loaded->compact_mode,
                      "loaded settings should preserve compact_mode");
         ok &= ExpectNear(loaded->panel_opacity,

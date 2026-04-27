@@ -20,6 +20,7 @@ struct OverlaySettings {
     bool show_sidebar{true};
     bool show_hotkey_hints{true};
     bool show_settings_panel{false};
+    bool capture_input_when_panel_open{false};
     bool compact_mode{false};
     double panel_opacity{0.86};
     OverlayDockAnchor dock_anchor{OverlayDockAnchor::RightTop};
