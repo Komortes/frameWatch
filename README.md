@@ -1,5 +1,8 @@
 # FrameWatch Mini
 
+[![CI](https://github.com/Komortes/frameWatch/actions/workflows/ci.yml/badge.svg)](https://github.com/Komortes/frameWatch/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 FrameWatch Mini is a lightweight local performance analysis tool for games.
 This repository contains the initial MVP scaffold:
 
@@ -197,6 +200,19 @@ Targeting helpers:
 
 ## Next implementation steps
 
+### Near-term
+
 - harden WndProc input routing for edge cases (IME/dead keys, focus-loss cleanup, and raw-input coexistence)
 - make the Windows injector verify target module presence/status more explicitly before injection
+
+### Medium-term
+
 - add DX12/Vulkan backends behind the same session/runtime interfaces
+- expand unit test coverage to overlay settings persistence, exporter round-trips, and session boundary conditions
+- add a `vcpkg.json` manifest so MinHook and SDL2 can be resolved automatically without manual `FRAMEWATCH_MINHOOK_ROOT` flags
+
+### Long-term / ideas
+
+- named pipe or shared-memory IPC so an external process (e.g. a tray app) can read live metrics without DLL injection
+- configurable alert thresholds (frame budget exceeded, 1% low below target) exposed through the overlay
+- Linux support behind the same session/runtime interfaces (Vulkan layer or LD_PRELOAD hook)

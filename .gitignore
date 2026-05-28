@@ -3,6 +3,8 @@
 /output/
 /.idea/
 /.vscode/
+/.claude/
+.DS_Store
 *.swp
 *.user
 *.vcxproj.user
