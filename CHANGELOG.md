@@ -5,6 +5,9 @@ All notable changes to this project will be documented here.
 ## [Unreleased]
 
 ### Added
+- Frame-budget alerts in the debug window: a header chip shows the share of recent frames
+  over the target budget (green/amber/red), and both the chip and the graph plot border
+  pulse red when the latest frame is a real stutter (>1.5x the target budget)
 - Configurable target FPS (`target_fps`, persisted) with frame-health coloring of the
   FPS/average/1%/0.1% stat cards and an emphasized target line on the frametime graph
   (cycle with `P` in the debug window)

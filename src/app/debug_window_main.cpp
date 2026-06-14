@@ -146,6 +146,7 @@ struct SettingsPanelLayout {
     std::vector<SettingsPanelTargetRow> target_rows;
 };
 
+constexpr double kStutterBudgetMultiplier = 1.5;
 constexpr int kSettingsPanelMargin = 16;
 constexpr int kSettingsMaxVisibleRows = 6;
 constexpr int kSettingsButtonGap = 6;
@@ -626,7 +627,9 @@ void DrawHeader(SDL_Renderer* renderer,
                 const Palette& palette,
                 const WindowState& state,
                 const framewatch::BenchmarkSummary& benchmark,
-                const TargetingState& targeting) {
+                const TargetingState& targeting,
+                double over_budget_ratio,
+                double stutter_pulse) {
     const SDL_Rect rect{24, 24, width - 48, 88};
     FillRect(renderer, rect, palette.panel);
     DrawRect(renderer, rect, palette.panel_border);
@@ -666,6 +669,25 @@ void DrawHeader(SDL_Renderer* renderer,
              2,
              target_color,
              CurrentTarget(targeting).has_value() ? "TARGET" : "NO TARGET");
+
+    // Frame-budget health chip: how often recent frames missed the target budget,
+    // pulsing red on a genuine stutter (latest frame well over budget).
+    const SDL_Color over_color = over_budget_ratio <= 0.05  ? palette.accent
+                                 : over_budget_ratio <= 0.25 ? palette.warning
+                                                             : palette.danger;
+    std::uint8_t over_fill_alpha = 48;
+    if (stutter_pulse > 0.0) {
+        over_fill_alpha = static_cast<std::uint8_t>(
+            std::clamp(48L + std::lround(160.0 * stutter_pulse), 0L, 255L));
+    }
+    const SDL_Rect over_chip{rect.x + rect.w - 496, rect.y + 18, 128, 28};
+    FillRect(renderer, over_chip,
+             SDL_Color{over_color.r, over_color.g, over_color.b, over_fill_alpha});
+    DrawRect(renderer, over_chip, over_color);
+    const int over_pct =
+        static_cast<int>(std::lround(std::clamp(over_budget_ratio, 0.0, 1.0) * 100.0));
+    DrawText(renderer, over_chip.x + 10, over_chip.y + 7, 2, over_color,
+             std::string("OVER ") + std::to_string(over_pct) + "%");
 }
 
 void DrawStatsGrid(SDL_Renderer* renderer,
@@ -753,7 +775,8 @@ void DrawGraph(SDL_Renderer* renderer,
                const Palette& palette,
                const framewatch::OverlaySnapshot& snapshot,
                std::string_view label,
-               int target_fps) {
+               int target_fps,
+               double stutter_pulse) {
     FillRect(renderer, rect, palette.panel);
     DrawRect(renderer, rect, palette.panel_border);
     FillRect(renderer, SDL_Rect{rect.x, rect.y, rect.w, 4}, palette.accent_2);
@@ -780,6 +803,17 @@ void DrawGraph(SDL_Renderer* renderer,
     const SDL_Rect plot_rect{rect.x + 18, rect.y + 52, rect.w - 36, rect.h - 78};
     FillRect(renderer, plot_rect, SDL_Color{10, 15, 25, 255});
     DrawRect(renderer, plot_rect, palette.grid);
+
+    // Pulsing red frame around the plot when a stutter is detected.
+    if (stutter_pulse > 0.0) {
+        const std::uint8_t alpha =
+            static_cast<std::uint8_t>(std::clamp(std::lround(220.0 * stutter_pulse), 0L, 255L));
+        SetDrawColor(renderer,
+                     SDL_Color{palette.danger.r, palette.danger.g, palette.danger.b, alpha});
+        SDL_RenderDrawRect(renderer, &plot_rect);
+        const SDL_Rect inset{plot_rect.x + 1, plot_rect.y + 1, plot_rect.w - 2, plot_rect.h - 2};
+        SDL_RenderDrawRect(renderer, &inset);
+    }
 
     for (int i = 1; i < 5; ++i) {
         const int grid_y = plot_rect.y + (i * plot_rect.h) / 5;
@@ -2133,6 +2167,28 @@ int RunWindow(const AppOptions& options) {
 
         const Palette runtime_palette = ApplyOverlaySettings(palette, overlay_settings);
         const auto graph_snapshot = benchmark.GraphSnapshot();
+
+        // Frame-budget alert state: ratio of recent frames over the target budget,
+        // plus a pulsing flag when the latest frame is a real stutter.
+        const double budget_ms =
+            1'000.0 / static_cast<double>(std::max(1, overlay_settings.target_fps));
+        std::size_t over_budget_frames = 0;
+        for (const auto& point : graph_snapshot.graph) {
+            if (point.frametime_ms > budget_ms) {
+                ++over_budget_frames;
+            }
+        }
+        const double over_budget_ratio =
+            graph_snapshot.graph.empty()
+                ? 0.0
+                : static_cast<double>(over_budget_frames) /
+                      static_cast<double>(graph_snapshot.graph.size());
+        const bool stutter_active =
+            live_metrics.latest_frametime_ms > (budget_ms * kStutterBudgetMultiplier);
+        const double pulse_phase =
+            0.5 + 0.5 * std::sin(
+                            std::chrono::duration<double>(now.time_since_epoch()).count() * 6.0);
+        const double stutter_pulse = stutter_active ? pulse_phase : 0.0;
         const int sidebar_width = overlay_settings.show_sidebar ? 272 : 0;
         const int graph_width =
             overlay_settings.show_sidebar ? width - 344 : width - 48;
@@ -2144,12 +2200,13 @@ int RunWindow(const AppOptions& options) {
                                height,
                                runtime_palette.background_top,
                                runtime_palette.background_bottom);
-        DrawHeader(renderer, width, runtime_palette, state, benchmark_summary, targeting);
+        DrawHeader(renderer, width, runtime_palette, state, benchmark_summary, targeting,
+                   over_budget_ratio, stutter_pulse);
         DrawStatsGrid(renderer, width, runtime_palette, live_metrics, benchmark_summary, targeting,
                       overlay_settings.target_fps);
         if (overlay_settings.show_graph) {
             DrawGraph(renderer, graph_rect, runtime_palette, graph_snapshot, benchmark.GraphLabel(),
-                      overlay_settings.target_fps);
+                      overlay_settings.target_fps, stutter_pulse);
         } else {
             const std::vector<std::string> overlay_lines{
                 "GRAPH HIDDEN",
