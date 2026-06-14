@@ -23,6 +23,7 @@ struct OverlaySettings {
     bool capture_input_when_panel_open{false};
     bool compact_mode{false};
     double panel_opacity{0.86};
+    int target_fps{60};
     OverlayDockAnchor dock_anchor{OverlayDockAnchor::RightTop};
     bool follow_target_window{false};
     std::string target_window_query;
@@ -34,6 +35,8 @@ struct OverlaySettings {
 
 double ClampOverlayOpacity(double opacity) noexcept;
 void AdjustOverlayOpacity(OverlaySettings& settings, double delta) noexcept;
+int ClampTargetFps(int fps) noexcept;
+int CycleTargetFps(int fps, int direction = 1) noexcept;
 OverlayDockAnchor CycleOverlayDockAnchor(OverlayDockAnchor anchor, int direction = 1) noexcept;
 std::string_view OverlayDockAnchorName(OverlayDockAnchor anchor) noexcept;
 std::optional<OverlayDockAnchor> ParseOverlayDockAnchor(std::string_view value) noexcept;

@@ -111,6 +111,7 @@ enum class SettingsPanelAction {
     CycleDock,
     OpacityDown,
     OpacityUp,
+    CycleTargetFps,
     TargetNext,
     TargetFront,
     ClearTarget,
@@ -261,6 +262,8 @@ Glyph GlyphFor(char input) {
             return {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11};
         case 'I':
             return {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E};
+        case 'J':
+            return {0x07, 0x02, 0x02, 0x02, 0x12, 0x12, 0x0C};
         case 'K':
             return {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11};
         case 'L':
@@ -291,6 +294,8 @@ Glyph GlyphFor(char input) {
             return {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11};
         case 'Y':
             return {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04};
+        case 'Z':
+            return {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F};
         case '0':
             return {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E};
         case '1':
@@ -586,6 +591,20 @@ void UpdateWindowTitle(SDL_Window* window,
     SDL_SetWindowTitle(window, stream.str().c_str());
 }
 
+// Maps an FPS reading to a health color relative to the configured target:
+// at/above target reads green, degraded-but-playable amber, far below red.
+SDL_Color FrameHealthColor(double fps, int target_fps, const Palette& palette) {
+    const double target = static_cast<double>(std::max(1, target_fps));
+    const double ratio = fps / target;
+    if (ratio >= 0.95) {
+        return palette.accent;
+    }
+    if (ratio >= 0.5) {
+        return palette.warning;
+    }
+    return palette.danger;
+}
+
 void DrawCard(SDL_Renderer* renderer,
               const SDL_Rect& rect,
               SDL_Color panel_color,
@@ -654,7 +673,8 @@ void DrawStatsGrid(SDL_Renderer* renderer,
                    const Palette& palette,
                    const framewatch::MetricsSnapshot& live_metrics,
                    const framewatch::BenchmarkSummary& benchmark,
-                   const TargetingState& targeting) {
+                   const TargetingState& targeting,
+                   int target_fps) {
     constexpr int columns = 4;
     constexpr int card_height = 104;
     constexpr int horizontal_gap = 16;
@@ -685,6 +705,19 @@ void DrawStatsGrid(SDL_Renderer* renderer,
         CurrentTarget(targeting).has_value() ? palette.accent : palette.text_muted,
     };
 
+    // FPS-style cards (current/average/1% low/0.1% low) are colored by how they
+    // measure up against the configured target FPS; the rest keep fixed accents.
+    const std::array<double, 8> health_fps{
+        live_metrics.current_fps,
+        live_metrics.average_fps,
+        live_metrics.one_percent_low_fps,
+        live_metrics.point_one_percent_low_fps,
+        -1.0,
+        -1.0,
+        -1.0,
+        -1.0,
+    };
+
     for (std::size_t i = 0; i < items.size(); ++i) {
         const int row = static_cast<int>(i) / columns;
         const int column = static_cast<int>(i) % columns;
@@ -695,13 +728,21 @@ void DrawStatsGrid(SDL_Renderer* renderer,
             card_height,
         };
 
+        SDL_Color accent = accents[i];
+        SDL_Color value_color = palette.text_primary;
+        if (health_fps[i] > 0.0) {
+            const SDL_Color health = FrameHealthColor(health_fps[i], target_fps, palette);
+            accent = health;
+            value_color = health;
+        }
+
         DrawCard(renderer,
                  rect,
                  palette.panel,
                  palette.panel_border,
-                 accents[i],
+                 accent,
                  palette.text_muted,
-                 palette.text_primary,
+                 value_color,
                  items[i].first,
                  items[i].second);
     }
@@ -711,18 +752,30 @@ void DrawGraph(SDL_Renderer* renderer,
                const SDL_Rect& rect,
                const Palette& palette,
                const framewatch::OverlaySnapshot& snapshot,
-               std::string_view label) {
+               std::string_view label,
+               int target_fps) {
     FillRect(renderer, rect, palette.panel);
     DrawRect(renderer, rect, palette.panel_border);
+    FillRect(renderer, SDL_Rect{rect.x, rect.y, rect.w, 4}, palette.accent_2);
 
     DrawText(renderer, rect.x + 18, rect.y + 16, 2, palette.text_primary, label);
+
+    double avg_ms = 0.0;
+    if (!snapshot.graph.empty()) {
+        for (const auto& point : snapshot.graph) {
+            avg_ms += point.frametime_ms;
+        }
+        avg_ms /= static_cast<double>(snapshot.graph.size());
+    }
+    const std::string readout = std::string("MS ") + FormatDouble(snapshot.graph_min_ms, 1) +
+                                " / " + FormatDouble(avg_ms, 1) + " / " +
+                                FormatDouble(snapshot.graph_max_ms, 1);
     DrawText(renderer,
-             rect.x + rect.w - 152,
+             rect.x + rect.w - TextWidth(readout, 2) - 18,
              rect.y + 16,
              2,
              palette.text_muted,
-             std::string("MS ") + FormatDouble(snapshot.graph_min_ms, 1) + " / " +
-                 FormatDouble(snapshot.graph_max_ms, 1));
+             readout);
 
     const SDL_Rect plot_rect{rect.x + 18, rect.y + 52, rect.w - 36, rect.h - 78};
     FillRect(renderer, plot_rect, SDL_Color{10, 15, 25, 255});
@@ -740,6 +793,50 @@ void DrawGraph(SDL_Renderer* renderer,
         SDL_RenderDrawLine(renderer, grid_x, plot_rect.y, grid_x, plot_rect.y + plot_rect.h);
     }
 
+    const double range = std::max(0.001, snapshot.graph_max_ms - snapshot.graph_min_ms);
+    const auto ms_to_y = [&](double ms) {
+        const double normalized = std::clamp((ms - snapshot.graph_min_ms) / range, 0.0, 1.0);
+        return plot_rect.y + plot_rect.h - static_cast<int>(std::lround(normalized * plot_rect.h));
+    };
+
+    // Frame-budget reference lines for the common FPS targets that fall in view.
+    struct FrameBudget {
+        double fps;
+        SDL_Color color;
+    };
+    const std::array<FrameBudget, 3> budgets{{
+        {30.0, palette.danger},
+        {60.0, palette.accent},
+        {120.0, palette.accent_2},
+    }};
+    for (const FrameBudget& budget : budgets) {
+        const double budget_ms = 1'000.0 / budget.fps;
+        if (budget_ms < snapshot.graph_min_ms || budget_ms > snapshot.graph_max_ms) {
+            continue;
+        }
+        const int budget_y = ms_to_y(budget_ms);
+        SetDrawColor(renderer, SDL_Color{budget.color.r, budget.color.g, budget.color.b, 80});
+        for (int x = plot_rect.x; x < plot_rect.x + plot_rect.w; x += 8) {
+            SDL_RenderDrawLine(renderer, x, budget_y,
+                               std::min(x + 4, plot_rect.x + plot_rect.w), budget_y);
+        }
+        DrawText(renderer, plot_rect.x + 4, budget_y - 12, 1, budget.color,
+                 std::to_string(static_cast<int>(std::lround(budget.fps))));
+    }
+
+    // Emphasized reference line for the user-configured target FPS.
+    const double target_ms = 1'000.0 / static_cast<double>(std::max(1, target_fps));
+    if (target_ms >= snapshot.graph_min_ms && target_ms <= snapshot.graph_max_ms) {
+        const int target_y = ms_to_y(target_ms);
+        SetDrawColor(renderer, palette.accent);
+        SDL_RenderDrawLine(renderer, plot_rect.x, target_y, plot_rect.x + plot_rect.w, target_y);
+        SDL_RenderDrawLine(renderer, plot_rect.x, target_y - 1, plot_rect.x + plot_rect.w,
+                           target_y - 1);
+        const std::string tag = std::string("TARGET ") + std::to_string(target_fps);
+        DrawText(renderer, plot_rect.x + plot_rect.w - TextWidth(tag, 1) - 6, target_y - 12, 1,
+                 palette.accent, tag);
+    }
+
     if (snapshot.graph.size() < 2) {
         DrawText(renderer,
                  plot_rect.x + 20,
@@ -753,28 +850,52 @@ void DrawGraph(SDL_Renderer* renderer,
     const double spike_threshold = snapshot.graph_min_ms +
                                    ((snapshot.graph_max_ms - snapshot.graph_min_ms) * 0.75);
 
-    for (std::size_t i = 1; i < snapshot.graph.size(); ++i) {
-        const auto& previous = snapshot.graph[i - 1];
-        const auto& current = snapshot.graph[i];
+    const auto point_x = [&](const framewatch::OverlayGraphPoint& point) {
+        return plot_rect.x + static_cast<int>(std::lround(point.x * plot_rect.w));
+    };
+    const auto point_y = [&](const framewatch::OverlayGraphPoint& point) {
+        return plot_rect.y + plot_rect.h - static_cast<int>(std::lround(point.y * plot_rect.h));
+    };
 
-        const int x1 = plot_rect.x + static_cast<int>(std::lround(previous.x * plot_rect.w));
-        const int y1 = plot_rect.y + plot_rect.h -
-                       static_cast<int>(std::lround(previous.y * plot_rect.h));
-        const int x2 = plot_rect.x + static_cast<int>(std::lround(current.x * plot_rect.w));
-        const int y2 = plot_rect.y + plot_rect.h -
-                       static_cast<int>(std::lround(current.y * plot_rect.h));
+    const int plot_bottom = plot_rect.y + plot_rect.h;
+
+    // Area fill under the curve: one vertical line per pixel column so the plot
+    // reads as a filled band without alpha banding from overlapping samples.
+    for (std::size_t i = 1; i < snapshot.graph.size(); ++i) {
+        const int xa = point_x(snapshot.graph[i - 1]);
+        const int ya = point_y(snapshot.graph[i - 1]);
+        const int xb = point_x(snapshot.graph[i]);
+        const int yb = point_y(snapshot.graph[i]);
+
+        SetDrawColor(renderer,
+                     SDL_Color{palette.accent_2.r, palette.accent_2.g, palette.accent_2.b, 38});
+        for (int x = xa; x <= xb; ++x) {
+            const double t = (xb > xa) ? static_cast<double>(x - xa) / (xb - xa) : 0.0;
+            const int y = ya + static_cast<int>(std::lround((yb - ya) * t));
+            SDL_RenderDrawLine(renderer, x, y, x, plot_bottom);
+        }
+    }
+
+    // Thick polyline on top, colored by spike severity.
+    for (std::size_t i = 1; i < snapshot.graph.size(); ++i) {
+        const int x1 = point_x(snapshot.graph[i - 1]);
+        const int y1 = point_y(snapshot.graph[i - 1]);
+        const int x2 = point_x(snapshot.graph[i]);
+        const int y2 = point_y(snapshot.graph[i]);
 
         const SDL_Color line_color =
-            current.frametime_ms >= spike_threshold ? palette.warning : palette.accent_2;
+            snapshot.graph[i].frametime_ms >= spike_threshold ? palette.warning : palette.accent_2;
         SetDrawColor(renderer, line_color);
         SDL_RenderDrawLine(renderer, x1, y1, x2, y2);
+        SDL_RenderDrawLine(renderer, x1, y1 - 1, x2, y2 - 1);
+        SDL_RenderDrawLine(renderer, x1, y1 + 1, x2, y2 + 1);
     }
 
     const auto& latest = snapshot.graph.back();
-    const int latest_x = plot_rect.x + static_cast<int>(std::lround(latest.x * plot_rect.w));
-    const int latest_y = plot_rect.y + plot_rect.h -
-                         static_cast<int>(std::lround(latest.y * plot_rect.h));
+    const int latest_x = point_x(latest);
+    const int latest_y = point_y(latest);
     FillRect(renderer, SDL_Rect{latest_x - 3, latest_y - 3, 7, 7}, palette.accent);
+    DrawRect(renderer, SDL_Rect{latest_x - 5, latest_y - 5, 11, 11}, palette.accent);
 }
 
 void DrawInfoPanel(SDL_Renderer* renderer,
@@ -828,6 +949,7 @@ void DrawSidebar(SDL_Renderer* renderer,
                                std::string(framewatch::OverlayDockAnchorName(settings.dock_anchor)));
         target_lines.push_back(std::string("OPACITY ") +
                                std::to_string(static_cast<int>(std::lround(settings.panel_opacity * 100.0))) + "%");
+        target_lines.push_back(std::string("TARGET FPS ") + std::to_string(settings.target_fps));
         target_lines.push_back(std::string("QUERY ") +
                                (targeting.title_query.empty() ? "AUTO" : SanitizeUiText(targeting.title_query, 22)));
         target_lines.push_back(std::string("VISIBLE ") + std::to_string(targeting.windows.size()));
@@ -846,13 +968,30 @@ void DrawSidebar(SDL_Renderer* renderer,
         target_lines.push_back("TAB NEXT  SHIFT+TAB PREV");
         target_lines.push_back("G FRONTMOST  F FOLLOW  N CLEAR");
         target_lines.push_back("C DOCK  [ ] OPACITY  V/I TOGGLE");
-        target_lines.push_back("S PANEL  T QUERY  D RESET");
+        target_lines.push_back("P TARGET FPS  S PANEL  T QUERY  D RESET");
     }
     DrawInfoPanel(renderer, target_rect, palette, palette.accent, "TARGET WINDOW", target_lines);
 }
 
 bool PointInRect(int x, int y, const SDL_Rect& rect) {
     return x >= rect.x && y >= rect.y && x < (rect.x + rect.w) && y < (rect.y + rect.h);
+}
+
+// On HiDPI displays SDL renders in physical pixels while pointer events are
+// reported in logical window points. The UI layout is built in renderer pixel
+// space, so incoming mouse coordinates must be scaled by the same ratio before
+// hit-testing, otherwise clicks land in the wrong place (e.g. 2x off on Retina).
+void ScaleMouseToRender(SDL_Window* window, SDL_Renderer* renderer, int& x, int& y) {
+    int window_w = 0;
+    int window_h = 0;
+    int output_w = 0;
+    int output_h = 0;
+    SDL_GetWindowSize(window, &window_w, &window_h);
+    SDL_GetRendererOutputSize(renderer, &output_w, &output_h);
+    if (window_w > 0 && window_h > 0) {
+        x = static_cast<int>(std::lround(static_cast<double>(x) * output_w / window_w));
+        y = static_cast<int>(std::lround(static_cast<double>(y) * output_h / window_h));
+    }
 }
 
 int ComputeSettingsVisibleRows(int height) {
@@ -1623,6 +1762,15 @@ int RunWindow(const AppOptions& options) {
                           std::chrono::seconds(2));
                 persist_overlay_settings();
                 break;
+            case SettingsPanelAction::CycleTargetFps:
+                overlay_settings.target_fps =
+                    framewatch::CycleTargetFps(overlay_settings.target_fps, 1);
+                SetStatus(state,
+                          std::string("TARGET FPS ") +
+                              std::to_string(overlay_settings.target_fps),
+                          std::chrono::seconds(2));
+                persist_overlay_settings();
+                break;
             case SettingsPanelAction::TargetNext:
                 RefreshTargets(targeting, kSelfTitleMarker);
                 CycleTarget(targeting, 1);
@@ -1692,6 +1840,7 @@ int RunWindow(const AppOptions& options) {
                 int mouse_y = 0;
                 SDL_GetRendererOutputSize(renderer, &width, &height);
                 SDL_GetMouseState(&mouse_x, &mouse_y);
+                ScaleMouseToRender(window, renderer, mouse_x, mouse_y);
                 const SettingsPanelLayout layout =
                     BuildSettingsPanelLayout(width,
                                              height,
@@ -1712,10 +1861,13 @@ int RunWindow(const AppOptions& options) {
                                              overlay_settings,
                                              targeting,
                                              state.target_list_start_index);
+                int mouse_x = event.motion.x;
+                int mouse_y = event.motion.y;
+                ScaleMouseToRender(window, renderer, mouse_x, mouse_y);
                 state.hovered_target_index = -1;
-                if (PointInRect(event.motion.x, event.motion.y, layout.target_list_rect)) {
+                if (PointInRect(mouse_x, mouse_y, layout.target_list_rect)) {
                     for (const SettingsPanelTargetRow& row : layout.target_rows) {
-                        if (PointInRect(event.motion.x, event.motion.y, row.rect)) {
+                        if (PointInRect(mouse_x, mouse_y, row.rect)) {
                             state.hovered_target_index = row.window_index;
                             break;
                         }
@@ -1732,8 +1884,9 @@ int RunWindow(const AppOptions& options) {
                                              overlay_settings,
                                              targeting,
                                              state.target_list_start_index);
-                const int mouse_x = event.button.x;
-                const int mouse_y = event.button.y;
+                int mouse_x = event.button.x;
+                int mouse_y = event.button.y;
+                ScaleMouseToRender(window, renderer, mouse_x, mouse_y);
 
                 if (!PointInRect(mouse_x, mouse_y, layout.panel_rect)) {
                     if (state.editing_target_query) {
@@ -1929,6 +2082,9 @@ int RunWindow(const AppOptions& options) {
                     case SDLK_d:
                         perform_settings_action(SettingsPanelAction::ResetDefaults);
                         break;
+                    case SDLK_p:
+                        perform_settings_action(SettingsPanelAction::CycleTargetFps);
+                        break;
                     default:
                         break;
                 }
@@ -1989,9 +2145,11 @@ int RunWindow(const AppOptions& options) {
                                runtime_palette.background_top,
                                runtime_palette.background_bottom);
         DrawHeader(renderer, width, runtime_palette, state, benchmark_summary, targeting);
-        DrawStatsGrid(renderer, width, runtime_palette, live_metrics, benchmark_summary, targeting);
+        DrawStatsGrid(renderer, width, runtime_palette, live_metrics, benchmark_summary, targeting,
+                      overlay_settings.target_fps);
         if (overlay_settings.show_graph) {
-            DrawGraph(renderer, graph_rect, runtime_palette, graph_snapshot, benchmark.GraphLabel());
+            DrawGraph(renderer, graph_rect, runtime_palette, graph_snapshot, benchmark.GraphLabel(),
+                      overlay_settings.target_fps);
         } else {
             const std::vector<std::string> overlay_lines{
                 "GRAPH HIDDEN",

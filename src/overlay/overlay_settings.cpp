@@ -1,7 +1,9 @@
 #include "framewatch/overlay/overlay_settings.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
@@ -193,6 +195,29 @@ void AdjustOverlayOpacity(OverlaySettings& settings, double delta) noexcept {
     settings.panel_opacity = ClampOverlayOpacity(settings.panel_opacity + delta);
 }
 
+int ClampTargetFps(int fps) noexcept {
+    return std::clamp(fps, 10, 1'000);
+}
+
+int CycleTargetFps(int fps, int direction) noexcept {
+    constexpr std::array<int, 7> kPresets{30, 60, 90, 120, 144, 165, 240};
+
+    // Snap to the closest preset, then step in the requested direction.
+    std::size_t index = 0;
+    int best_distance = std::abs(kPresets[0] - fps);
+    for (std::size_t i = 1; i < kPresets.size(); ++i) {
+        const int distance = std::abs(kPresets[i] - fps);
+        if (distance < best_distance) {
+            best_distance = distance;
+            index = i;
+        }
+    }
+
+    const int count = static_cast<int>(kPresets.size());
+    const int stepped = (static_cast<int>(index) + (direction % count) + count) % count;
+    return kPresets[static_cast<std::size_t>(stepped)];
+}
+
 OverlayDockAnchor CycleOverlayDockAnchor(OverlayDockAnchor anchor, int direction) noexcept {
     constexpr int kAnchorCount = 4;
     int index = 0;
@@ -297,6 +322,9 @@ std::optional<OverlaySettings> LoadOverlaySettings(const std::filesystem::path& 
     if (const auto panel_opacity = ExtractJsonNumber(content, "panel_opacity")) {
         settings.panel_opacity = ClampOverlayOpacity(*panel_opacity);
     }
+    if (const auto target_fps = ExtractJsonInteger(content, "target_fps")) {
+        settings.target_fps = ClampTargetFps(*target_fps);
+    }
     if (const auto dock_anchor = ExtractJsonToken(content, "dock_anchor")) {
         if (const auto parsed = ParseOverlayDockAnchor(*dock_anchor)) {
             settings.dock_anchor = *parsed;
@@ -345,6 +373,7 @@ bool SaveOverlaySettings(const OverlaySettings& settings, const std::filesystem:
            << ",\n";
     output << "  \"compact_mode\": " << settings.compact_mode << ",\n";
     output << "  \"panel_opacity\": " << settings.panel_opacity << ",\n";
+    output << "  \"target_fps\": " << ClampTargetFps(settings.target_fps) << ",\n";
     output << "  \"dock_anchor\": \"" << OverlayDockAnchorName(settings.dock_anchor) << "\",\n";
     output << "  \"follow_target_window\": " << settings.follow_target_window << ",\n";
     output << "  \"target_window_query\": \""

@@ -156,6 +156,7 @@ Controls:
 - `T`: edit the target window query from inside the visualizer
 - `C`: cycle target dock anchor (`right-top`, `right-bottom`, `left-top`, `left-bottom`)
 - `[` / `]`: decrease or increase overlay panel opacity
+- `P`: cycle the target FPS (30/60/90/120/144/165/240) used for frame-health coloring
 - `V`: toggle the frametime graph
 - `I`: toggle the sidebar panels
 - `D`: reset overlay settings to defaults
@@ -177,6 +178,7 @@ Exports are written to:
 The settings JSON keeps the current overlay layout and target-window restore state:
 - graph/sidebar visibility
 - panel opacity and dock anchor
+- target FPS (used for frame-health coloring of the stats cards and the graph target line)
 - follow-target mode
 - last selected target query
 - window size and last position

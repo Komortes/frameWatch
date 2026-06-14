@@ -374,6 +374,19 @@ bool TestOverlaySettingsControls() {
                      0.0001,
                      "opacity adjustment should respect the lower bound");
 
+    ok &= Expect(framewatch::ClampTargetFps(5) == 10,
+                 "target fps should clamp to the lower bound");
+    ok &= Expect(framewatch::ClampTargetFps(5'000) == 1'000,
+                 "target fps should clamp to the upper bound");
+    ok &= Expect(framewatch::CycleTargetFps(60, 1) == 90,
+                 "cycling target fps up should advance to the next preset");
+    ok &= Expect(framewatch::CycleTargetFps(60, -1) == 30,
+                 "cycling target fps down should step to the previous preset");
+    ok &= Expect(framewatch::CycleTargetFps(58, 1) == 90,
+                 "cycling should snap a near value to its closest preset before stepping");
+    ok &= Expect(framewatch::CycleTargetFps(240, 1) == 30,
+                 "cycling target fps should wrap around the preset list");
+
     settings.dock_anchor = framewatch::OverlayDockAnchor::LeftBottom;
     settings.dock_anchor = framewatch::CycleOverlayDockAnchor(settings.dock_anchor);
     ok &= Expect(settings.dock_anchor == framewatch::OverlayDockAnchor::RightTop,
@@ -394,6 +407,7 @@ bool TestOverlaySettingsPersistence() {
     settings.capture_input_when_panel_open = true;
     settings.compact_mode = true;
     settings.panel_opacity = 0.55;
+    settings.target_fps = 144;
     settings.dock_anchor = framewatch::OverlayDockAnchor::LeftTop;
     settings.follow_target_window = true;
     settings.target_window_query = "Game \"Window\" \\\\ DX11";
@@ -428,6 +442,8 @@ bool TestOverlaySettingsPersistence() {
                          0.55,
                          0.0001,
                          "loaded settings should preserve panel opacity");
+        ok &= Expect(loaded->target_fps == 144,
+                     "loaded settings should preserve target fps");
         ok &= Expect(loaded->dock_anchor == framewatch::OverlayDockAnchor::LeftTop,
                      "loaded settings should preserve dock anchor");
         ok &= Expect(loaded->follow_target_window,
