@@ -4,6 +4,30 @@ All notable changes to this project will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+- MetricsEngine: replaced `E[x²]−(E[x])²` variance formula with Welford's online
+  algorithm (rolling add/remove) — eliminates catastrophic cancellation on long sessions
+- MetricsEngine: `average_fps` and `average_frametime_ms` now both derive from the
+  same rolling window mean, so `average_fps == 1000 / average_frametime_ms` always holds
+- OverlayRuntime: `OnPresent` is now protected by a `std::mutex`; added
+  `CopyLastSnapshot()` for safe cross-thread reads
+- Dx11PresentHookWin: `Install()` now guards against a second concurrent install via
+  `compare_exchange_strong`; `original_present_` is cleared on every error/remove path
+  so the freed MinHook trampoline can never be called through a dangling pointer
+  (**requires Windows build to verify — macOS/CI cannot exercise this path**)
+- SessionLogger: added optional `max_samples` cap to prevent unbounded memory growth
+
+### Added
+- `vcpkg.json` manifest (SDL2, MinHook) for automatic dependency resolution
+- `CopyLastSnapshot()` on `OverlayRuntime` for thread-safe snapshot reads
+- Tests: `TestMetricsVarianceCorrectness`, `TestMetricsVarianceRollingEviction`,
+  `TestMetricsNoNegativeVariance`, `TestExporterRoundTrip`
+
+### Infrastructure
+- `.gitignore`: unified build directory pattern (`/build*/`), added `vcpkg_installed/`,
+  `CMakeUserPresets.json`, `compile_commands.json`
+- README rewritten: platform table, Known Limitations section, accurate build instructions
+
 ### Added
 - Frame-budget alerts in the debug window: a header chip shows the share of recent frames
   over the target budget (green/amber/red), and both the chip and the graph plot border

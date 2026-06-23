@@ -177,9 +177,21 @@ class Dx11PresentHookWin final : public PresentHook {
             return true;
         }
 
+        // Only one hook instance may be installed per process because PresentDetour
+        // is a static function that dispatches through active_instance_.
+        Dx11PresentHookWin* expected_null = nullptr;
+        if (!active_instance_.compare_exchange_strong(
+                expected_null, this, std::memory_order_acq_rel, std::memory_order_acquire)) {
+            state_ = HookState::Error;
+            description_ =
+                "Another DX11 Present hook instance is already active. Only one hook may be installed per process.";
+            return false;
+        }
+
         void* present_target = nullptr;
         std::string error;
         if (!ResolvePresentTarget(present_target, error)) {
+            active_instance_.store(nullptr, std::memory_order_release);
             state_ = HookState::Error;
             description_ = std::move(error);
             return false;
@@ -187,6 +199,7 @@ class Dx11PresentHookWin final : public PresentHook {
 
         const MH_STATUS init_status = MH_Initialize();
         if (init_status != MH_OK && init_status != MH_ERROR_ALREADY_INITIALIZED) {
+            active_instance_.store(nullptr, std::memory_order_release);
             state_ = HookState::Error;
             description_ = FormatMinHookStatus("Failed to initialize MinHook", init_status);
             return false;
@@ -197,6 +210,7 @@ class Dx11PresentHookWin final : public PresentHook {
                           reinterpret_cast<LPVOID>(&Dx11PresentHookWin::PresentDetour),
                           reinterpret_cast<LPVOID*>(&original_present_));
         if (create_status != MH_OK) {
+            active_instance_.store(nullptr, std::memory_order_release);
             state_ = HookState::Error;
             description_ = FormatMinHookStatus("Failed to create DX11 Present hook", create_status);
             return false;
@@ -205,13 +219,16 @@ class Dx11PresentHookWin final : public PresentHook {
         const MH_STATUS enable_status = MH_EnableHook(present_target);
         if (enable_status != MH_OK) {
             MH_RemoveHook(present_target);
+            // MH_RemoveHook frees the trampoline that original_present_ pointed to;
+            // clear it so PresentDetour cannot call through a freed pointer.
+            original_present_ = nullptr;
+            active_instance_.store(nullptr, std::memory_order_release);
             state_ = HookState::Error;
             description_ = FormatMinHookStatus("Failed to enable DX11 Present hook", enable_status);
             return false;
         }
 
         hook_target_ = present_target;
-        active_instance_.store(this, std::memory_order_release);
         state_ = HookState::Running;
         description_ =
             "DX11 Present hook installed. Live swap-chain presents now feed the frametime runtime.";
@@ -221,12 +238,16 @@ class Dx11PresentHookWin final : public PresentHook {
 
     void Remove() noexcept override {
 #if defined(FRAMEWATCH_HAS_MINHOOK)
+        // Null active_instance_ first so PresentDetour stops dispatching before
+        // we disable and free the hook trampoline.
         active_instance_.store(nullptr, std::memory_order_release);
 
         if (hook_target_ != nullptr) {
             MH_DisableHook(hook_target_);
             MH_RemoveHook(hook_target_);
             hook_target_ = nullptr;
+            // Trampoline is now freed; clear our copy so it cannot be called.
+            original_present_ = nullptr;
         }
 
         state_ = HookState::Ready;
@@ -262,6 +283,8 @@ class Dx11PresentHookWin final : public PresentHook {
         }
 
         void** vtable = *reinterpret_cast<void***>(context.swap_chain);
+        // IDXGISwapChain::Present is at vtable slot 8:
+        // IUnknown(0-2) + IDXGIObject(3-6) + IDXGIDeviceSubObject(7) + Present(8)
         present_target = vtable[8];
         context.Reset();
 

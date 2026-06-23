@@ -29,6 +29,8 @@ add_library(framewatch_core
 target_include_directories(framewatch_core
     PUBLIC
         ${CMAKE_CURRENT_SOURCE_DIR}/include
+    PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
 
 target_compile_features(framewatch_core PUBLIC cxx_std_20)
@@ -163,7 +165,13 @@ if(FRAMEWATCH_BUILD_DEBUG_WINDOW)
     endif()
 
     if(FRAMEWATCH_SDL2_TARGET)
-        add_executable(framewatch_debug_window src/app/debug_window_main.cpp)
+        add_executable(framewatch_debug_window
+            src/app/debug_window_main.cpp
+            src/app/debug_window/bitmap_font.cpp
+            src/app/debug_window/renderer.cpp
+            src/app/debug_window/targeting.cpp
+            src/app/debug_window/ui_panels.cpp
+        )
         target_link_libraries(framewatch_debug_window PRIVATE framewatch_core ${FRAMEWATCH_SDL2_TARGET})
         target_compile_features(framewatch_debug_window PRIVATE cxx_std_20)
     else()

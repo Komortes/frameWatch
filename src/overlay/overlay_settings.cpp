@@ -2,150 +2,15 @@
 
 #include <algorithm>
 #include <array>
-#include <cctype>
-#include <cstdlib>
 #include <filesystem>
 #include <fstream>
-#include <iomanip>
-#include <string>
 #include <system_error>
+
+#include "nlohmann/json.hpp"
 
 namespace framewatch {
 
 namespace {
-
-std::string Trim(std::string_view value) {
-    std::size_t start = 0;
-    while (start < value.size() &&
-           std::isspace(static_cast<unsigned char>(value[start])) != 0) {
-        ++start;
-    }
-
-    std::size_t end = value.size();
-    while (end > start &&
-           std::isspace(static_cast<unsigned char>(value[end - 1])) != 0) {
-        --end;
-    }
-
-    return std::string(value.substr(start, end - start));
-}
-
-std::optional<std::string> ExtractJsonToken(std::string_view source, std::string_view key) {
-    const std::string pattern = "\"" + std::string(key) + "\"";
-    const std::size_t key_pos = source.find(pattern);
-    if (key_pos == std::string_view::npos) {
-        return std::nullopt;
-    }
-
-    std::size_t value_pos = source.find(':', key_pos + pattern.size());
-    if (value_pos == std::string_view::npos) {
-        return std::nullopt;
-    }
-
-    ++value_pos;
-    while (value_pos < source.size() &&
-           std::isspace(static_cast<unsigned char>(source[value_pos])) != 0) {
-        ++value_pos;
-    }
-
-    if (value_pos >= source.size()) {
-        return std::nullopt;
-    }
-
-    if (source[value_pos] == '"') {
-        std::string decoded;
-        bool escape = false;
-
-        for (std::size_t cursor = value_pos + 1; cursor < source.size(); ++cursor) {
-            const char ch = source[cursor];
-            if (escape) {
-                switch (ch) {
-                    case '\\':
-                        decoded.push_back('\\');
-                        break;
-                    case '"':
-                        decoded.push_back('"');
-                        break;
-                    case 'n':
-                        decoded.push_back('\n');
-                        break;
-                    case 'r':
-                        decoded.push_back('\r');
-                        break;
-                    case 't':
-                        decoded.push_back('\t');
-                        break;
-                    default:
-                        decoded.push_back(ch);
-                        break;
-                }
-                escape = false;
-                continue;
-            }
-
-            if (ch == '\\') {
-                escape = true;
-                continue;
-            }
-
-            if (ch == '"') {
-                return decoded;
-            }
-
-            decoded.push_back(ch);
-        }
-
-        return std::nullopt;
-    }
-
-    std::size_t end_pos = value_pos;
-    while (end_pos < source.size() && source[end_pos] != ',' && source[end_pos] != '}' &&
-           source[end_pos] != '\n' && source[end_pos] != '\r') {
-        ++end_pos;
-    }
-
-    return Trim(source.substr(value_pos, end_pos - value_pos));
-}
-
-std::optional<bool> ExtractJsonBool(std::string_view source, std::string_view key) {
-    const auto token = ExtractJsonToken(source, key);
-    if (!token.has_value()) {
-        return std::nullopt;
-    }
-    if (*token == "true") {
-        return true;
-    }
-    if (*token == "false") {
-        return false;
-    }
-    return std::nullopt;
-}
-
-std::optional<double> ExtractJsonNumber(std::string_view source, std::string_view key) {
-    const auto token = ExtractJsonToken(source, key);
-    if (!token.has_value()) {
-        return std::nullopt;
-    }
-
-    try {
-        return std::stod(*token);
-    } catch (...) {
-        return std::nullopt;
-    }
-}
-
-std::optional<int> ExtractJsonInteger(std::string_view source, std::string_view key) {
-    const auto token = ExtractJsonToken(source, key);
-    if (!token.has_value() || *token == "null") {
-        return std::nullopt;
-    }
-
-    try {
-        return std::stoi(*token);
-    } catch (...) {
-        return std::nullopt;
-    }
-}
 
 int ClampWindowWidth(int width) noexcept {
     return std::max(width, 640);
@@ -155,34 +20,18 @@ int ClampWindowHeight(int height) noexcept {
     return std::max(height, 420);
 }
 
-std::string EscapeJsonString(std::string_view value) {
-    std::string escaped;
-    escaped.reserve(value.size());
-
-    for (const char ch : value) {
-        switch (ch) {
-            case '\\':
-                escaped += "\\\\";
-                break;
-            case '"':
-                escaped += "\\\"";
-                break;
-            case '\n':
-                escaped += "\\n";
-                break;
-            case '\r':
-                escaped += "\\r";
-                break;
-            case '\t':
-                escaped += "\\t";
-                break;
-            default:
-                escaped.push_back(ch);
-                break;
-        }
+// Helpers to safely extract optional typed values from a parsed JSON object.
+template <typename T>
+std::optional<T> GetOpt(const nlohmann::json& j, std::string_view key) {
+    const auto it = j.find(key);
+    if (it == j.end() || it->is_null()) {
+        return std::nullopt;
     }
-
-    return escaped;
+    try {
+        return it->get<T>();
+    } catch (...) {
+        return std::nullopt;
+    }
 }
 
 }  // namespace
@@ -202,7 +51,6 @@ int ClampTargetFps(int fps) noexcept {
 int CycleTargetFps(int fps, int direction) noexcept {
     constexpr std::array<int, 7> kPresets{30, 60, 90, 120, 144, 165, 240};
 
-    // Snap to the closest preset, then step in the requested direction.
     std::size_t index = 0;
     int best_distance = std::abs(kPresets[0] - fps);
     for (std::size_t i = 1; i < kPresets.size(); ++i) {
@@ -223,65 +71,37 @@ OverlayDockAnchor CycleOverlayDockAnchor(OverlayDockAnchor anchor, int direction
     int index = 0;
 
     switch (anchor) {
-        case OverlayDockAnchor::RightTop:
-            index = 0;
-            break;
-        case OverlayDockAnchor::RightBottom:
-            index = 1;
-            break;
-        case OverlayDockAnchor::LeftTop:
-            index = 2;
-            break;
-        case OverlayDockAnchor::LeftBottom:
-            index = 3;
-            break;
+        case OverlayDockAnchor::RightTop:   index = 0; break;
+        case OverlayDockAnchor::RightBottom: index = 1; break;
+        case OverlayDockAnchor::LeftTop:    index = 2; break;
+        case OverlayDockAnchor::LeftBottom: index = 3; break;
     }
 
     index = (index + (direction % kAnchorCount) + kAnchorCount) % kAnchorCount;
 
     switch (index) {
-        case 0:
-            return OverlayDockAnchor::RightTop;
-        case 1:
-            return OverlayDockAnchor::RightBottom;
-        case 2:
-            return OverlayDockAnchor::LeftTop;
-        default:
-            return OverlayDockAnchor::LeftBottom;
+        case 0: return OverlayDockAnchor::RightTop;
+        case 1: return OverlayDockAnchor::RightBottom;
+        case 2: return OverlayDockAnchor::LeftTop;
+        default: return OverlayDockAnchor::LeftBottom;
     }
 }
 
 std::string_view OverlayDockAnchorName(OverlayDockAnchor anchor) noexcept {
     switch (anchor) {
-        case OverlayDockAnchor::RightTop:
-            return "RIGHT TOP";
-        case OverlayDockAnchor::RightBottom:
-            return "RIGHT BOTTOM";
-        case OverlayDockAnchor::LeftTop:
-            return "LEFT TOP";
-        case OverlayDockAnchor::LeftBottom:
-            return "LEFT BOTTOM";
+        case OverlayDockAnchor::RightTop:    return "RIGHT TOP";
+        case OverlayDockAnchor::RightBottom: return "RIGHT BOTTOM";
+        case OverlayDockAnchor::LeftTop:     return "LEFT TOP";
+        case OverlayDockAnchor::LeftBottom:  return "LEFT BOTTOM";
     }
-
     return "RIGHT TOP";
 }
 
 std::optional<OverlayDockAnchor> ParseOverlayDockAnchor(std::string_view value) noexcept {
-    const std::string normalized = Trim(value);
-
-    if (normalized == "RIGHT TOP") {
-        return OverlayDockAnchor::RightTop;
-    }
-    if (normalized == "RIGHT BOTTOM") {
-        return OverlayDockAnchor::RightBottom;
-    }
-    if (normalized == "LEFT TOP") {
-        return OverlayDockAnchor::LeftTop;
-    }
-    if (normalized == "LEFT BOTTOM") {
-        return OverlayDockAnchor::LeftBottom;
-    }
-
+    if (value == "RIGHT TOP")    return OverlayDockAnchor::RightTop;
+    if (value == "RIGHT BOTTOM") return OverlayDockAnchor::RightBottom;
+    if (value == "LEFT TOP")     return OverlayDockAnchor::LeftTop;
+    if (value == "LEFT BOTTOM")  return OverlayDockAnchor::LeftBottom;
     return std::nullopt;
 }
 
@@ -291,59 +111,44 @@ std::optional<OverlaySettings> LoadOverlaySettings(const std::filesystem::path& 
         return std::nullopt;
     }
 
-    const std::string content((std::istreambuf_iterator<char>(input)),
-                              std::istreambuf_iterator<char>());
-    if (content.empty()) {
-        return OverlaySettings{};
+    nlohmann::json j;
+    try {
+        input >> j;
+    } catch (...) {
+        return std::nullopt;
+    }
+
+    if (!j.is_object()) {
+        return std::nullopt;
     }
 
     OverlaySettings settings;
-    if (const auto show_overlay = ExtractJsonBool(content, "show_overlay")) {
-        settings.show_overlay = *show_overlay;
-    }
-    if (const auto show_graph = ExtractJsonBool(content, "show_graph")) {
-        settings.show_graph = *show_graph;
-    }
-    if (const auto show_sidebar = ExtractJsonBool(content, "show_sidebar")) {
-        settings.show_sidebar = *show_sidebar;
-    }
-    if (const auto show_hotkey_hints = ExtractJsonBool(content, "show_hotkey_hints")) {
-        settings.show_hotkey_hints = *show_hotkey_hints;
-    }
-    if (const auto show_settings_panel = ExtractJsonBool(content, "show_settings_panel")) {
-        settings.show_settings_panel = *show_settings_panel;
-    }
-    if (const auto capture_input = ExtractJsonBool(content, "capture_input_when_panel_open")) {
-        settings.capture_input_when_panel_open = *capture_input;
-    }
-    if (const auto compact_mode = ExtractJsonBool(content, "compact_mode")) {
-        settings.compact_mode = *compact_mode;
-    }
-    if (const auto panel_opacity = ExtractJsonNumber(content, "panel_opacity")) {
-        settings.panel_opacity = ClampOverlayOpacity(*panel_opacity);
-    }
-    if (const auto target_fps = ExtractJsonInteger(content, "target_fps")) {
-        settings.target_fps = ClampTargetFps(*target_fps);
-    }
-    if (const auto dock_anchor = ExtractJsonToken(content, "dock_anchor")) {
-        if (const auto parsed = ParseOverlayDockAnchor(*dock_anchor)) {
+
+    if (auto v = GetOpt<bool>(j, "show_overlay"))                  settings.show_overlay = *v;
+    if (auto v = GetOpt<bool>(j, "show_graph"))                    settings.show_graph = *v;
+    if (auto v = GetOpt<bool>(j, "show_sidebar"))                  settings.show_sidebar = *v;
+    if (auto v = GetOpt<bool>(j, "show_hotkey_hints"))             settings.show_hotkey_hints = *v;
+    if (auto v = GetOpt<bool>(j, "show_settings_panel"))           settings.show_settings_panel = *v;
+    if (auto v = GetOpt<bool>(j, "capture_input_when_panel_open")) settings.capture_input_when_panel_open = *v;
+    if (auto v = GetOpt<bool>(j, "compact_mode"))                  settings.compact_mode = *v;
+    if (auto v = GetOpt<bool>(j, "follow_target_window"))          settings.follow_target_window = *v;
+
+    if (auto v = GetOpt<double>(j, "panel_opacity")) settings.panel_opacity = ClampOverlayOpacity(*v);
+    if (auto v = GetOpt<int>(j, "target_fps"))       settings.target_fps = ClampTargetFps(*v);
+    if (auto v = GetOpt<int>(j, "window_width"))     settings.window_width = ClampWindowWidth(*v);
+    if (auto v = GetOpt<int>(j, "window_height"))    settings.window_height = ClampWindowHeight(*v);
+
+    if (auto v = GetOpt<std::string>(j, "dock_anchor")) {
+        if (auto parsed = ParseOverlayDockAnchor(*v)) {
             settings.dock_anchor = *parsed;
         }
     }
-    if (const auto follow_target = ExtractJsonBool(content, "follow_target_window")) {
-        settings.follow_target_window = *follow_target;
+    if (auto v = GetOpt<std::string>(j, "target_window_query")) {
+        settings.target_window_query = *v;
     }
-    if (const auto target_query = ExtractJsonToken(content, "target_window_query")) {
-        settings.target_window_query = *target_query;
-    }
-    if (const auto window_width = ExtractJsonInteger(content, "window_width")) {
-        settings.window_width = ClampWindowWidth(*window_width);
-    }
-    if (const auto window_height = ExtractJsonInteger(content, "window_height")) {
-        settings.window_height = ClampWindowHeight(*window_height);
-    }
-    settings.window_x = ExtractJsonInteger(content, "window_x");
-    settings.window_y = ExtractJsonInteger(content, "window_y");
+
+    settings.window_x = GetOpt<int>(j, "window_x");
+    settings.window_y = GetOpt<int>(j, "window_y");
 
     return settings;
 }
@@ -357,37 +162,32 @@ bool SaveOverlaySettings(const OverlaySettings& settings, const std::filesystem:
         }
     }
 
+    nlohmann::json j;
+    j["show_overlay"]                  = settings.show_overlay;
+    j["show_graph"]                    = settings.show_graph;
+    j["show_sidebar"]                  = settings.show_sidebar;
+    j["show_hotkey_hints"]             = settings.show_hotkey_hints;
+    j["show_settings_panel"]           = settings.show_settings_panel;
+    j["capture_input_when_panel_open"] = settings.capture_input_when_panel_open;
+    j["compact_mode"]                  = settings.compact_mode;
+    j["panel_opacity"]                 = ClampOverlayOpacity(settings.panel_opacity);
+    j["target_fps"]                    = ClampTargetFps(settings.target_fps);
+    j["dock_anchor"]                   = std::string(OverlayDockAnchorName(settings.dock_anchor));
+    j["follow_target_window"]          = settings.follow_target_window;
+    j["target_window_query"]           = settings.target_window_query;
+    j["window_width"]                  = ClampWindowWidth(settings.window_width);
+    j["window_height"]                 = ClampWindowHeight(settings.window_height);
+    j["window_x"] = settings.window_x.has_value() ? nlohmann::json(*settings.window_x)
+                                                   : nlohmann::json(nullptr);
+    j["window_y"] = settings.window_y.has_value() ? nlohmann::json(*settings.window_y)
+                                                   : nlohmann::json(nullptr);
+
     std::ofstream output(path);
     if (!output.is_open()) {
         return false;
     }
 
-    output << std::boolalpha << std::fixed << std::setprecision(2);
-    output << "{\n";
-    output << "  \"show_overlay\": " << settings.show_overlay << ",\n";
-    output << "  \"show_graph\": " << settings.show_graph << ",\n";
-    output << "  \"show_sidebar\": " << settings.show_sidebar << ",\n";
-    output << "  \"show_hotkey_hints\": " << settings.show_hotkey_hints << ",\n";
-    output << "  \"show_settings_panel\": " << settings.show_settings_panel << ",\n";
-    output << "  \"capture_input_when_panel_open\": " << settings.capture_input_when_panel_open
-           << ",\n";
-    output << "  \"compact_mode\": " << settings.compact_mode << ",\n";
-    output << "  \"panel_opacity\": " << settings.panel_opacity << ",\n";
-    output << "  \"target_fps\": " << ClampTargetFps(settings.target_fps) << ",\n";
-    output << "  \"dock_anchor\": \"" << OverlayDockAnchorName(settings.dock_anchor) << "\",\n";
-    output << "  \"follow_target_window\": " << settings.follow_target_window << ",\n";
-    output << "  \"target_window_query\": \""
-           << EscapeJsonString(settings.target_window_query) << "\",\n";
-    output << "  \"window_width\": " << ClampWindowWidth(settings.window_width) << ",\n";
-    output << "  \"window_height\": " << ClampWindowHeight(settings.window_height) << ",\n";
-    output << "  \"window_x\": "
-           << (settings.window_x.has_value() ? std::to_string(*settings.window_x) : "null")
-           << ",\n";
-    output << "  \"window_y\": "
-           << (settings.window_y.has_value() ? std::to_string(*settings.window_y) : "null")
-           << '\n';
-    output << "}\n";
-
+    output << j.dump(2) << '\n';
     return output.good();
 }
 
