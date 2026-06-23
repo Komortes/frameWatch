@@ -27,8 +27,7 @@ double FrametimePercentile(const std::deque<double>& frametimes, double percenti
     const auto upper_index = static_cast<std::size_t>(std::ceil(scaled_index));
     const double fraction = scaled_index - static_cast<double>(lower_index);
 
-    return sorted[lower_index] +
-           ((sorted[upper_index] - sorted[lower_index]) * fraction);
+    return sorted[lower_index] + ((sorted[upper_index] - sorted[lower_index]) * fraction);
 }
 
 }  // namespace
@@ -37,25 +36,49 @@ MetricsEngine::MetricsEngine(std::size_t history_limit)
     : history_limit_(std::max<std::size_t>(1, history_limit)) {}
 
 void MetricsEngine::PushSample(const FrameSample& sample) {
-    frametimes_ms_.push_back(sample.frametime_ms);
-    rolling_sum_frametimes_ms_ += sample.frametime_ms;
-    rolling_sum_squares_ms_ += sample.frametime_ms * sample.frametime_ms;
-    total_time_ms_ += sample.frametime_ms;
-    latest_frametime_ms_ = sample.frametime_ms;
-    ++total_sample_count_;
+    const double x = sample.frametime_ms;
 
-    if (frametimes_ms_.size() > history_limit_) {
-        const double removed = frametimes_ms_.front();
+    if (frametimes_ms_.size() >= history_limit_) {
+        const double y = frametimes_ms_.front();
+        const std::size_t n = frametimes_ms_.size();
+
+        if (n == 1) {
+            // Replacing the only element: skip the remove/add dance
+            welford_mean_ = x;
+            welford_M2_ = 0.0;
+        } else {
+            // Remove y: n elements → n-1 elements (Welford downdate)
+            const double old_mean = welford_mean_;
+            const double dn = static_cast<double>(n);
+            welford_mean_ = (dn * welford_mean_ - y) / (dn - 1.0);
+            welford_M2_ -= (y - old_mean) * (y - welford_mean_);
+            welford_M2_ = std::max(0.0, welford_M2_);
+
+            // Add x: n-1 elements → n elements (Welford update)
+            const double delta = x - welford_mean_;
+            welford_mean_ += delta / dn;
+            welford_M2_ += delta * (x - welford_mean_);
+        }
+
         frametimes_ms_.pop_front();
-        rolling_sum_frametimes_ms_ -= removed;
-        rolling_sum_squares_ms_ -= removed * removed;
+    } else {
+        // Window not yet full: k elements → k+1 elements
+        const double k1 = static_cast<double>(frametimes_ms_.size() + 1);
+        const double delta = x - welford_mean_;
+        welford_mean_ += delta / k1;
+        welford_M2_ += delta * (x - welford_mean_);
     }
+
+    frametimes_ms_.push_back(x);
+    total_time_ms_ += x;
+    latest_frametime_ms_ = x;
+    ++total_sample_count_;
 }
 
 void MetricsEngine::Reset() noexcept {
     frametimes_ms_.clear();
-    rolling_sum_frametimes_ms_ = 0.0;
-    rolling_sum_squares_ms_ = 0.0;
+    welford_mean_ = 0.0;
+    welford_M2_ = 0.0;
     total_time_ms_ = 0.0;
     latest_frametime_ms_ = 0.0;
     total_sample_count_ = 0;
@@ -69,20 +92,14 @@ MetricsSnapshot MetricsEngine::Snapshot() const {
         return snapshot;
     }
 
+    const std::size_t n = frametimes_ms_.size();
+
     snapshot.latest_frametime_ms = latest_frametime_ms_;
-    snapshot.current_fps =
-        latest_frametime_ms_ > 0.0 ? (1'000.0 / latest_frametime_ms_) : 0.0;
-    snapshot.average_fps =
-        total_time_ms_ > 0.0 ? ((static_cast<double>(total_sample_count_) * 1'000.0) / total_time_ms_)
-                             : 0.0;
-
-    snapshot.average_frametime_ms =
-        rolling_sum_frametimes_ms_ / static_cast<double>(frametimes_ms_.size());
-
-    const double variance =
-        (rolling_sum_squares_ms_ / static_cast<double>(frametimes_ms_.size())) -
-        (snapshot.average_frametime_ms * snapshot.average_frametime_ms);
-    snapshot.frametime_variance_ms2 = std::max(0.0, variance);
+    snapshot.current_fps = latest_frametime_ms_ > 0.0 ? (1'000.0 / latest_frametime_ms_) : 0.0;
+    snapshot.average_frametime_ms = welford_mean_;
+    snapshot.average_fps = welford_mean_ > 0.0 ? (1'000.0 / welford_mean_) : 0.0;
+    snapshot.frametime_variance_ms2 =
+        n > 1 ? std::max(0.0, welford_M2_ / static_cast<double>(n)) : 0.0;
 
     const auto [min_it, max_it] =
         std::minmax_element(frametimes_ms_.begin(), frametimes_ms_.end());

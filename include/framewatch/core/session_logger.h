@@ -10,6 +10,8 @@ namespace framewatch {
 
 class SessionLogger {
   public:
+    explicit SessionLogger(std::size_t max_samples = 0);
+
     void Append(const FrameSample& sample);
     void Clear() noexcept;
 
@@ -20,6 +22,7 @@ class SessionLogger {
     bool ExportJson(const std::filesystem::path& path) const;
 
   private:
+    std::size_t max_samples_{0};
     std::vector<FrameSample> samples_;
 };
 

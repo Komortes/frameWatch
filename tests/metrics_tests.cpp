@@ -2,11 +2,14 @@
 #include <cstdint>
 #include <cstdlib>
 #include <filesystem>
+#include <fstream>
 #include <iostream>
 #include <string_view>
 
 #include "framewatch/core/frametime_tracker.h"
 #include "framewatch/core/metrics_engine.h"
+#include "framewatch/exporter/csv_exporter.h"
+#include "framewatch/exporter/json_exporter.h"
 #include "framewatch/hooks/hook_overlay_service.h"
 #include "framewatch/overlay/overlay_settings.h"
 #include "framewatch/overlay/overlay_runtime.h"
@@ -397,6 +400,104 @@ bool TestOverlaySettingsControls() {
     return ok;
 }
 
+bool TestMetricsVarianceCorrectness() {
+    // {10, 20, 30, 40}: mean=25, population variance=125
+    framewatch::MetricsEngine metrics(10);
+    for (double ft : {10.0, 20.0, 30.0, 40.0}) {
+        framewatch::FrameSample s;
+        s.frametime_ms = ft;
+        s.fps = 1000.0 / ft;
+        metrics.PushSample(s);
+    }
+    const auto snap = metrics.Snapshot();
+    bool ok = true;
+    ok &= ExpectNear(snap.frametime_variance_ms2, 125.0, 0.001,
+                     "variance of {10,20,30,40} should be 125 ms2");
+    ok &= ExpectNear(snap.average_frametime_ms, 25.0, 0.001,
+                     "average frametime should be 25 ms");
+    ok &= ExpectNear(snap.average_fps, 1000.0 / 25.0, 0.001,
+                     "average_fps should equal 1000/average_frametime_ms");
+    return ok;
+}
+
+bool TestMetricsVarianceRollingEviction() {
+    // Window=3, push {10,20,30,40}. Window holds {20,30,40}.
+    // mean=30, population variance=((20-30)²+(30-30)²+(40-30)²)/3 = 200/3
+    framewatch::MetricsEngine metrics(3);
+    for (double ft : {10.0, 20.0, 30.0, 40.0}) {
+        framewatch::FrameSample s;
+        s.frametime_ms = ft;
+        s.fps = 1000.0 / ft;
+        metrics.PushSample(s);
+    }
+    const auto snap = metrics.Snapshot();
+    bool ok = true;
+    ok &= ExpectNear(snap.average_frametime_ms, 30.0, 0.001,
+                     "rolling mean after eviction should be 30");
+    ok &= ExpectNear(snap.frametime_variance_ms2, 200.0 / 3.0, 0.001,
+                     "rolling variance after eviction should be 200/3");
+    ok &= ExpectNear(snap.average_fps, 1000.0 / snap.average_frametime_ms, 0.001,
+                     "average_fps must equal 1000/average_frametime_ms after eviction");
+    return ok;
+}
+
+bool TestMetricsNoNegativeVariance() {
+    // Constant frametimes over many samples (exceeds window) — variance must stay >= 0
+    framewatch::MetricsEngine metrics(256);
+    for (int i = 0; i < 500; ++i) {
+        framewatch::FrameSample s;
+        s.frametime_ms = 16.666667;
+        s.fps = 60.0;
+        metrics.PushSample(s);
+    }
+    const auto snap = metrics.Snapshot();
+    bool ok = true;
+    ok &= Expect(snap.frametime_variance_ms2 >= 0.0,
+                 "variance must never be negative");
+    ok &= ExpectNear(snap.frametime_variance_ms2, 0.0, 1e-6,
+                     "variance of constant frametimes must be near zero");
+    return ok;
+}
+
+bool TestExporterRoundTrip() {
+    std::vector<framewatch::FrameSample> samples;
+    for (std::uint64_t i = 1; i <= 5; ++i) {
+        framewatch::FrameSample s;
+        s.frame_index = i;
+        s.timestamp_seconds = static_cast<double>(i) / 60.0;
+        s.frametime_ms = 16.666667;
+        s.fps = 60.0;
+        samples.push_back(s);
+    }
+
+    const auto tmp = std::filesystem::temp_directory_path();
+    const auto csv_path = tmp / "framewatch_exporter_test.csv";
+    const auto json_path = tmp / "framewatch_exporter_test.json";
+    std::filesystem::remove(csv_path);
+    std::filesystem::remove(json_path);
+
+    bool ok = true;
+    ok &= Expect(framewatch::ExportSamplesToCsv(samples, csv_path),
+                 "csv exporter should succeed");
+    ok &= Expect(std::filesystem::exists(csv_path), "csv file should be created");
+    ok &= Expect(framewatch::ExportSamplesToJson(samples, json_path),
+                 "json exporter should succeed");
+    ok &= Expect(std::filesystem::exists(json_path), "json file should be created");
+
+    std::ifstream csv_file(csv_path);
+    ok &= Expect(csv_file.is_open(), "csv should be readable");
+    std::string line;
+    int line_count = 0;
+    while (std::getline(csv_file, line)) {
+        ++line_count;
+    }
+    ok &= Expect(line_count == 6, "csv should have 1 header + 5 data rows");
+
+    std::filesystem::remove(csv_path);
+    std::filesystem::remove(json_path);
+    return ok;
+}
+
 bool TestOverlaySettingsPersistence() {
     framewatch::OverlaySettings settings;
     settings.show_overlay = false;
@@ -513,6 +614,10 @@ int main() {
     ok &= TestFrametimeTracker();
     ok &= TestStableMetrics();
     ok &= TestRollingHistoryLimit();
+    ok &= TestMetricsVarianceCorrectness();
+    ok &= TestMetricsVarianceRollingEviction();
+    ok &= TestMetricsNoNegativeVariance();
+    ok &= TestExporterRoundTrip();
     ok &= TestPerformanceSessionBenchmarkLifecycle();
     ok &= TestOverlayRuntimePresentFlow();
     ok &= TestOverlayRuntimeRendererActions();

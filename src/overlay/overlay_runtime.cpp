@@ -34,6 +34,8 @@ bool OverlayRuntime::IsInitialized() const noexcept {
 }
 
 bool OverlayRuntime::OnPresent(const PresentEvent& present_event) {
+    std::lock_guard lock(mutex_);
+
     if (!initialized_) {
         return false;
     }
@@ -64,6 +66,14 @@ bool OverlayRuntime::OnPresent(const PresentEvent& present_event) {
     }
     has_snapshot_ = true;
     return true;
+}
+
+std::optional<OverlaySnapshot> OverlayRuntime::CopyLastSnapshot() const {
+    std::lock_guard lock(mutex_);
+    if (!has_snapshot_) {
+        return std::nullopt;
+    }
+    return last_snapshot_;
 }
 
 bool OverlayRuntime::OnPresent(FrameClock::time_point timestamp) {

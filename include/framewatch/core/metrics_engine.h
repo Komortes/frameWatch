@@ -34,8 +34,8 @@ class MetricsEngine {
   private:
     std::size_t history_limit_;
     std::deque<double> frametimes_ms_;
-    double rolling_sum_frametimes_ms_{0.0};
-    double rolling_sum_squares_ms_{0.0};
+    double welford_mean_{0.0};
+    double welford_M2_{0.0};
     double total_time_ms_{0.0};
     double latest_frametime_ms_{0.0};
     std::size_t total_sample_count_{0};

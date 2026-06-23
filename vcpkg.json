@@ -1,0 +1,15 @@
+{
+  "name": "framewatch-mini",
+  "version": "0.1.0",
+  "description": "Lightweight game performance analysis tool",
+  "dependencies": [
+    {
+      "name": "sdl2",
+      "platform": "!uwp"
+    },
+    {
+      "name": "minhook",
+      "platform": "windows"
+    }
+  ]
+}

@@ -5,7 +5,12 @@
 
 namespace framewatch {
 
+SessionLogger::SessionLogger(std::size_t max_samples) : max_samples_(max_samples) {}
+
 void SessionLogger::Append(const FrameSample& sample) {
+    if (max_samples_ > 0 && samples_.size() >= max_samples_) {
+        samples_.erase(samples_.begin());
+    }
     samples_.push_back(sample);
 }
 

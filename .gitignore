@@ -1,11 +1,26 @@
-/build/
-/build_verify*/
+# Build directories (any name starting with "build")
+/build*/
+
+# Generated output
 /output/
+
+# vcpkg installed tree
+/vcpkg_installed/
+
+# CMake user-local files
+CMakeUserPresets.json
+compile_commands.json
+
+# IDEs and editors
 /.idea/
 /.vscode/
 /.claude/
-.DS_Store
 *.swp
 *.user
 *.vcxproj.user
+
+# macOS
+.DS_Store
+
+# Planning artifacts (local only, never commit)
 /docs/superpowers/

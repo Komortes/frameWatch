@@ -2,6 +2,8 @@
 
 #include <filesystem>
 #include <memory>
+#include <mutex>
+#include <optional>
 #include <string>
 
 #include "framewatch/overlay/overlay_renderer.h"
@@ -32,13 +34,17 @@ class OverlayRuntime {
     PerformanceSession& Session() noexcept;
     const PerformanceSession& Session() const noexcept;
 
+    // Safe for same-thread callers (renderer callbacks inside OnPresent).
     const OverlaySnapshot* LastSnapshot() const noexcept;
+    // Thread-safe copy for cross-thread readers (e.g. status reporters).
+    std::optional<OverlaySnapshot> CopyLastSnapshot() const;
     const char* RendererName() const noexcept;
     std::string_view RendererDescription() const noexcept;
 
   private:
     void SetOverlayStatus(std::string message, int visible_frames = 180);
 
+    mutable std::mutex mutex_;
     std::unique_ptr<OverlayRenderer> renderer_;
     PerformanceSession session_;
     OverlaySnapshot last_snapshot_;
