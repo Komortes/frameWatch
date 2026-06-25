@@ -10,6 +10,7 @@
     {
       "name": "minhook",
       "platform": "windows"
-    }
+    },
+    "catch2"
   ]
 }

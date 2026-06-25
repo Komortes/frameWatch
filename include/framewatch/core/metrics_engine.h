@@ -2,6 +2,7 @@
 
 #include <cstddef>
 #include <deque>
+#include <set>
 #include <vector>
 
 #include "framewatch/core/frame_sample.h"
@@ -34,6 +35,7 @@ class MetricsEngine {
   private:
     std::size_t history_limit_;
     std::deque<double> frametimes_ms_;
+    std::multiset<double> sorted_frametimes_ms_;
     double welford_mean_{0.0};
     double welford_M2_{0.0};
     double total_time_ms_{0.0};

@@ -8,6 +8,25 @@ option(FRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP "Build the injected DX11 overlay DLL a
 option(FRAMEWATCH_BUILD_DEMO "Build the CLI MVP demo" ON)
 option(FRAMEWATCH_BUILD_DEBUG_WINDOW "Build the SDL2 debug window if SDL2 is available" ON)
 option(FRAMEWATCH_BUILD_TESTS "Build unit tests" ON)
+option(FRAMEWATCH_SANITIZE_ADDRESS "Enable AddressSanitizer + UBSan (GCC/Clang only)" OFF)
+option(FRAMEWATCH_SANITIZE_THREAD "Enable ThreadSanitizer (GCC/Clang only)" OFF)
+
+if(FRAMEWATCH_SANITIZE_ADDRESS AND FRAMEWATCH_SANITIZE_THREAD)
+    message(FATAL_ERROR "FRAMEWATCH_SANITIZE_ADDRESS and FRAMEWATCH_SANITIZE_THREAD are mutually exclusive")
+endif()
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang" AND NOT CMAKE_CXX_SIMULATE_ID STREQUAL "MSVC")
+    if(FRAMEWATCH_SANITIZE_ADDRESS)
+        add_compile_options(-fsanitize=address,undefined -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=address,undefined)
+        message(STATUS "FrameWatch: AddressSanitizer + UBSan enabled")
+    endif()
+    if(FRAMEWATCH_SANITIZE_THREAD)
+        add_compile_options(-fsanitize=thread -fno-omit-frame-pointer)
+        add_link_options(-fsanitize=thread)
+        message(STATUS "FrameWatch: ThreadSanitizer enabled")
+    endif()
+endif()
 
 set(FRAMEWATCH_MINHOOK_ROOT "" CACHE PATH "Optional MinHook installation root")
 
@@ -182,8 +201,25 @@ endif()
 include(CTest)
 
 if(BUILD_TESTING AND FRAMEWATCH_BUILD_TESTS)
-    add_executable(framewatch_tests tests/metrics_tests.cpp)
-    target_link_libraries(framewatch_tests PRIVATE framewatch_core)
-    target_compile_features(framewatch_tests PRIVATE cxx_std_20)
-    add_test(NAME framewatch_tests COMMAND framewatch_tests)
+    find_package(Catch2 3 QUIET)
+    if(NOT TARGET Catch2::Catch2WithMain)
+        include(FetchContent)
+        FetchContent_Declare(
+            Catch2
+            GIT_REPOSITORY https://github.com/catchorg/Catch2.git
+            GIT_TAG        v3.7.1
+            GIT_SHALLOW    TRUE
+        )
+        FetchContent_MakeAvailable(Catch2)
+    endif()
+
+    if(TARGET Catch2::Catch2WithMain)
+        add_executable(framewatch_tests tests/metrics_tests.cpp)
+        target_link_libraries(framewatch_tests PRIVATE framewatch_core Catch2::Catch2WithMain)
+        target_compile_features(framewatch_tests PRIVATE cxx_std_20)
+        include(Catch)
+        catch_discover_tests(framewatch_tests)
+    else()
+        message(STATUS "FrameWatch: Catch2 unavailable — skipping unit tests")
+    endif()
 endif()

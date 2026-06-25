@@ -28,6 +28,23 @@ All notable changes to this project will be documented here.
   `CMakeUserPresets.json`, `compile_commands.json`
 - README rewritten: platform table, Known Limitations section, accurate build instructions
 
+### Added (M2)
+- `debug_window_main.cpp` split from 2276-line monolith into focused modules under
+  `src/app/debug_window/`: `types.h`, `bitmap_font`, `renderer`, `targeting`, `ui_panels`
+  (all in `namespace dw`); main file reduced to ~450 lines of app/loop logic
+- `nlohmann/json` v3.11.3 single-header vendored in `third_party/`; replaced hand-rolled
+  JSON parser in `overlay_settings.cpp` with `input >> j` / `j.dump(2)` round-trip
+- `MetricsEngine`: replaced O(n log n) copy+sort in `Snapshot()` with a `std::multiset<double>`
+  mirror kept in sync during `PushSample()`; percentile queries now O(n·(1−p)) ≈ O(20)
+  for 1% low and O(2) for 0.1% low at n=2000; min/max also O(1) from iterator endpoints
+- Migrated tests from hand-rolled `Expect`/`ExpectNear`/`main()` to Catch2 v3 (`TEST_CASE`,
+  `REQUIRE`, `CHECK`, `Approx`); each of 15 test cases now registers as an individual
+  CTest entry; Catch2 obtained via `find_package` fallback to `FetchContent` — no CI changes
+  required; `OverlaySettings` test split into 4 focused cases by subsystem
+- CI: added `sanitize-asan` (ASan + UBSan) and `sanitize-tsan` (TSan) jobs on Ubuntu;
+  `FRAMEWATCH_SANITIZE_ADDRESS` and `FRAMEWATCH_SANITIZE_THREAD` CMake options for local use;
+  all 15 tests pass clean under ASan+UBSan locally (LSan active on Linux CI only)
+
 ### Added
 - Frame-budget alerts in the debug window: a header chip shows the share of recent frames
   over the target budget (green/amber/red), and both the chip and the graph plot border

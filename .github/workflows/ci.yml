@@ -51,6 +51,53 @@ jobs:
       - name: Test
         run: ctest --test-dir build --output-on-failure
 
+  sanitize-asan:
+    name: Ubuntu ASan + UBSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DFRAMEWATCH_ENABLE_DX11_HOOK=OFF
+          -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=OFF
+          -DFRAMEWATCH_BUILD_DEBUG_WINDOW=OFF
+          -DFRAMEWATCH_SANITIZE_ADDRESS=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          ASAN_OPTIONS: abort_on_error=1:detect_leaks=1
+          UBSAN_OPTIONS: abort_on_error=1:print_stacktrace=1
+
+  sanitize-tsan:
+    name: Ubuntu TSan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo
+          -DFRAMEWATCH_ENABLE_DX11_HOOK=OFF
+          -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=OFF
+          -DFRAMEWATCH_BUILD_DEBUG_WINDOW=OFF
+          -DFRAMEWATCH_SANITIZE_THREAD=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+        env:
+          TSAN_OPTIONS: abort_on_error=1
+
   build-windows:
     name: Windows (MSVC, DX11 hook)
     runs-on: windows-latest
