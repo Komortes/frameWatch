@@ -3,7 +3,8 @@ cmake_minimum_required(VERSION 3.21)
 project(FrameWatchMini VERSION 0.1.0 LANGUAGES CXX)
 
 option(FRAMEWATCH_ENABLE_DX11_HOOK "Build the DX11 hook scaffold on Windows" ON)
-option(FRAMEWATCH_ENABLE_MINHOOK "Enable MinHook-backed DX11 Present detouring when MinHook is available" ON)
+option(FRAMEWATCH_ENABLE_VULKAN_HOOK "Build the Vulkan vkQueuePresentKHR hook scaffold on Windows" ON)
+option(FRAMEWATCH_ENABLE_MINHOOK "Enable MinHook-backed Present detouring when MinHook is available" ON)
 option(FRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP "Build the injected DX11 overlay DLL and injector on Windows" ON)
 option(FRAMEWATCH_BUILD_DEMO "Build the CLI MVP demo" ON)
 option(FRAMEWATCH_BUILD_DEBUG_WINDOW "Build the SDL2 debug window if SDL2 is available" ON)
@@ -118,6 +119,14 @@ if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)
     endif()
 endif()
 
+if(WIN32 AND FRAMEWATCH_ENABLE_VULKAN_HOOK)
+    target_sources(framewatch_core PRIVATE
+        src/hooks/vulkan/vulkan_present_hook_win.cpp
+    )
+    target_compile_definitions(framewatch_core PRIVATE FRAMEWATCH_HAS_VULKAN_HOOK=1)
+    message(STATUS "FrameWatch: Vulkan hook scaffold enabled")
+endif()
+
 if(APPLE)
     find_library(FRAMEWATCH_APPLICATION_SERVICES_FRAMEWORK ApplicationServices REQUIRED)
     target_sources(framewatch_core PRIVATE src/platform/window_targeting_macos.cpp)
@@ -130,6 +139,12 @@ if(FRAMEWATCH_BUILD_DEMO)
     add_executable(framewatch_demo src/app/main.cpp)
     target_link_libraries(framewatch_demo PRIVATE framewatch_core)
     target_compile_features(framewatch_demo PRIVATE cxx_std_20)
+endif()
+
+if(WIN32 AND FRAMEWATCH_ENABLE_VULKAN_HOOK)
+    add_executable(framewatch_vulkan_hook_smoke src/app/vulkan_hook_smoke_win.cpp)
+    target_link_libraries(framewatch_vulkan_hook_smoke PRIVATE framewatch_core)
+    target_compile_features(framewatch_vulkan_hook_smoke PRIVATE cxx_std_20)
 endif()
 
 if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)

@@ -9,6 +9,7 @@ namespace framewatch {
 enum class GraphicsApi {
     Unknown,
     Dx11,
+    Vulkan,
 };
 
 struct PresentEvent {

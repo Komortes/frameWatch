@@ -44,6 +44,12 @@ All notable changes to this project will be documented here.
 - CI: added `sanitize-asan` (ASan + UBSan) and `sanitize-tsan` (TSan) jobs on Ubuntu;
   `FRAMEWATCH_SANITIZE_ADDRESS` and `FRAMEWATCH_SANITIZE_THREAD` CMake options for local use;
   all 15 tests pass clean under ASan+UBSan locally (LSan active on Linux CI only)
+- `VulkanPresentHookWin` (`include/framewatch/hooks/vulkan/vulkan_present_hook_win.h`,
+  `src/hooks/vulkan/vulkan_present_hook_win.cpp`): Windows-only `vkQueuePresentKHR` detour
+  via MinHook; requires no Vulkan SDK — minimal ABI types defined inline; gracefully returns
+  `HookState::Unsupported` when Vulkan or MinHook is absent; `GraphicsApi::Vulkan` and
+  `HookBackend::Vulkan` added to the shared enums; smoke binary `framewatch_vulkan_hook_smoke`
+  built when `FRAMEWATCH_ENABLE_VULKAN_HOOK=ON` (default on Windows)
 - `IpcServer` (`include/framewatch/ipc/ipc_server.h`, `src/ipc/ipc_server.cpp`):
   cross-platform named-pipe (Windows) / Unix-socket (macOS/Linux) server that receives
   `FrameSample` data as newline-delimited JSON from a client (e.g. the injected DLL);
