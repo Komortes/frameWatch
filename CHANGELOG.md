@@ -28,6 +28,31 @@ All notable changes to this project will be documented here.
   `CMakeUserPresets.json`, `compile_commands.json`
 - README rewritten: platform table, Known Limitations section, accurate build instructions
 
+### Added (M4)
+- Standalone IPC viewer (`src/app/viewer_main.cpp`, `framewatch_viewer`): SDL2
+  window (640×420) with three states — WAITING (no client), LIVE (streaming),
+  DISCONNECTED (last stats); stat cards for avg FPS / avg FT / 1% low / 0.1%
+  low; live frametime graph with budget reference line and spike colouring;
+  min/avg/max graph labels; `[R]`eset / `[E]`xport / `[Q]`uit hotkeys; reuses
+  `dw::BitmapFont` + `dw::Renderer` from debug_window modules; `FRAMEWATCH_BUILD_VIEWER`
+  CMake option (ON by default when SDL2 present)
+- Linux LD_PRELOAD Vulkan hook (`src/preload/framewatch_preload_linux.cpp`,
+  built as `libframewatch_preload.so`): intercepts `vkQueuePresentKHR` via
+  `RTLD_NEXT`; streams per-frame NDJSON (`frame/ts/ft_ms/fps`) to the IPC
+  Unix socket `/tmp/framewatch-live.sock`; no Vulkan SDK required — minimal
+  ABI types defined inline; graceful no-op when socket is absent or drops;
+  mutex-protected timestamp for multi-threaded present paths; CI job
+  `linux-preload` builds and runs dlopen smoke test on Ubuntu;
+  `FRAMEWATCH_BUILD_LINUX_PRELOAD` CMake option (default ON on Linux)
+  Usage: `LD_PRELOAD=/path/to/libframewatch_preload.so ./your_vulkan_game`
+- Public C API (`include/framewatch/framewatch.h`, `src/c_api/framewatch_c.cpp`): stable
+  C-linkage shared library (`framewatch_c_api`) wrapping the C++ core; safe for FFI from
+  Python, Rust, Go, and other languages; API: `fw_session_create/destroy/reset`,
+  `fw_session_push_frame`, `fw_session_snapshot` → `fw_snapshot_t` (fps, frametime, 1%/0.1%
+  lows, min/max), `fw_session_start/stop_benchmark`, `fw_session_benchmark_snapshot`,
+  `fw_session_export` (CSV + JSON); null-handle safety on every function; 7 new Catch2 test
+  cases (22 total, all passing); `FRAMEWATCH_BUILD_C_API` CMake option (default ON)
+
 ### Added (M2)
 - `debug_window_main.cpp` split from 2276-line monolith into focused modules under
   `src/app/debug_window/`: `types.h`, `bitmap_font`, `renderer`, `targeting`, `ui_panels`

@@ -4,6 +4,7 @@
 #include <fstream>
 #include <string_view>
 
+#include "framewatch/framewatch.h"
 #include "framewatch/core/frametime_tracker.h"
 #include "framewatch/core/metrics_engine.h"
 #include "framewatch/exporter/csv_exporter.h"
@@ -503,4 +504,113 @@ TEST_CASE("HookOverlayService wiring", "[hook]") {
     service.Shutdown();
     CHECK(hook_ptr->remove_was_called);
     CHECK_FALSE(service.IsInitialized());
+}
+
+// ---------------------------------------------------------------------------
+// Public C API
+// ---------------------------------------------------------------------------
+
+TEST_CASE("C API version string", "[capi]") {
+    const char* v = fw_version();
+    REQUIRE(v != nullptr);
+    CHECK(std::string(v) == std::string("0.1.0"));
+}
+
+TEST_CASE("C API session create/destroy", "[capi]") {
+    fw_session_t s = fw_session_create();
+    REQUIRE(s != nullptr);
+    fw_session_destroy(s);
+}
+
+TEST_CASE("C API null handle safety", "[capi]") {
+    // None of these should crash
+    fw_session_destroy(nullptr);
+    fw_session_reset(nullptr);
+    fw_session_push_frame(nullptr, 16.6);
+    fw_session_start_benchmark(nullptr);
+    fw_session_stop_benchmark(nullptr);
+    fw_snapshot_t snap{};
+    CHECK(fw_session_benchmark_snapshot(nullptr, &snap) == 0);
+    CHECK(fw_session_export(nullptr, "a.csv", "a.json") == -1);
+    CHECK(fw_session_export(reinterpret_cast<fw_session_t>(1), nullptr, "a.json") == -1);
+}
+
+TEST_CASE("C API push and snapshot", "[capi]") {
+    fw_session_t s = fw_session_create();
+    REQUIRE(s != nullptr);
+
+    for (int i = 0; i < 60; ++i) {
+        fw_session_push_frame(s, 16.666667);
+    }
+
+    const fw_snapshot_t snap = fw_session_snapshot(s);
+    CHECK(snap.sample_count == 60);
+    CHECK(snap.average_fps == Approx(60.0).margin(0.1));
+    CHECK(snap.average_frametime_ms == Approx(16.666667).margin(0.01));
+    CHECK(snap.min_frametime_ms == Approx(16.666667).margin(0.01));
+    CHECK(snap.max_frametime_ms == Approx(16.666667).margin(0.01));
+
+    fw_session_destroy(s);
+}
+
+TEST_CASE("C API benchmark lifecycle", "[capi]") {
+    fw_session_t s = fw_session_create();
+    REQUIRE(s != nullptr);
+
+    fw_snapshot_t pre{};
+    CHECK(fw_session_benchmark_snapshot(s, &pre) == 0);  // no benchmark yet
+
+    for (int i = 0; i < 10; ++i) fw_session_push_frame(s, 16.666667);
+    fw_session_start_benchmark(s);
+    for (int i = 0; i < 30; ++i) fw_session_push_frame(s, 16.666667);
+    fw_session_stop_benchmark(s);
+
+    fw_snapshot_t bm{};
+    REQUIRE(fw_session_benchmark_snapshot(s, &bm) == 1);
+    CHECK(bm.sample_count == 30);
+    CHECK(bm.average_fps == Approx(60.0).margin(0.1));
+
+    fw_session_destroy(s);
+}
+
+TEST_CASE("C API export", "[capi]") {
+    fw_session_t s = fw_session_create();
+    REQUIRE(s != nullptr);
+
+    for (int i = 0; i < 5; ++i) fw_session_push_frame(s, 16.666667);
+
+    const auto tmp = std::filesystem::temp_directory_path();
+    const auto csv  = (tmp / "fw_capi_test.csv").string();
+    const auto json = (tmp / "fw_capi_test.json").string();
+    std::filesystem::remove(csv);
+    std::filesystem::remove(json);
+
+    CHECK(fw_session_export(s, csv.c_str(), json.c_str()) == 0);
+    CHECK(std::filesystem::exists(csv));
+    CHECK(std::filesystem::exists(json));
+
+    {
+        std::ifstream f(csv);
+        int lines = 0;
+        std::string line;
+        while (std::getline(f, line)) ++lines;
+        CHECK(lines == 6);  // 1 header + 5 rows
+    }
+
+    std::filesystem::remove(csv);
+    std::filesystem::remove(json);
+    fw_session_destroy(s);
+}
+
+TEST_CASE("C API reset clears samples", "[capi]") {
+    fw_session_t s = fw_session_create();
+    REQUIRE(s != nullptr);
+
+    for (int i = 0; i < 20; ++i) fw_session_push_frame(s, 16.666667);
+    CHECK(fw_session_snapshot(s).sample_count == 20);
+
+    fw_session_reset(s);
+    CHECK(fw_session_snapshot(s).sample_count == 0);
+
+    fw_session_destroy(s);
 }

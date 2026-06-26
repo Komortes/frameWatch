@@ -98,6 +98,27 @@ jobs:
         env:
           TSAN_OPTIONS: abort_on_error=1
 
+  linux-preload:
+    name: Ubuntu Linux LD_PRELOAD hook
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DFRAMEWATCH_ENABLE_DX11_HOOK=OFF
+          -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=OFF
+          -DFRAMEWATCH_BUILD_DEBUG_WINDOW=OFF
+          -DFRAMEWATCH_BUILD_LINUX_PRELOAD=ON
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test (preload smoke)
+        run: ctest --test-dir build --output-on-failure -R "Linux preload"
+
   build-windows:
     name: Windows (MSVC, DX11 hook)
     runs-on: windows-latest

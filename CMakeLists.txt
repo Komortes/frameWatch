@@ -11,6 +11,9 @@ option(FRAMEWATCH_BUILD_DEBUG_WINDOW "Build the SDL2 debug window if SDL2 is ava
 option(FRAMEWATCH_BUILD_TESTS "Build unit tests" ON)
 option(FRAMEWATCH_SANITIZE_ADDRESS "Enable AddressSanitizer + UBSan (GCC/Clang only)" OFF)
 option(FRAMEWATCH_SANITIZE_THREAD "Enable ThreadSanitizer (GCC/Clang only)" OFF)
+option(FRAMEWATCH_BUILD_VIEWER "Build the standalone IPC viewer (requires SDL2)" ON)
+option(FRAMEWATCH_BUILD_LINUX_PRELOAD "Build the Linux LD_PRELOAD Vulkan hook (Linux only)" ON)
+option(FRAMEWATCH_BUILD_C_API "Build the public C shared-library API (framewatch_c_api)" ON)
 
 if(FRAMEWATCH_SANITIZE_ADDRESS AND FRAMEWATCH_SANITIZE_THREAD)
     message(FATAL_ERROR "FRAMEWATCH_SANITIZE_ADDRESS and FRAMEWATCH_SANITIZE_THREAD are mutually exclusive")
@@ -214,6 +217,67 @@ if(FRAMEWATCH_BUILD_DEBUG_WINDOW)
     endif()
 endif()
 
+if(FRAMEWATCH_BUILD_VIEWER AND FRAMEWATCH_SDL2_TARGET)
+    add_executable(framewatch_viewer
+        src/app/viewer_main.cpp
+        src/app/debug_window/bitmap_font.cpp
+        src/app/debug_window/renderer.cpp)
+    target_link_libraries(framewatch_viewer PRIVATE framewatch_core ${FRAMEWATCH_SDL2_TARGET})
+    target_include_directories(framewatch_viewer PRIVATE
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/app)
+    target_compile_features(framewatch_viewer PRIVATE cxx_std_20)
+    if(MSVC)
+        target_compile_options(framewatch_viewer PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(framewatch_viewer PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    message(STATUS "FrameWatch: standalone viewer enabled")
+elseif(FRAMEWATCH_BUILD_VIEWER)
+    message(STATUS "FrameWatch: viewer skipped (SDL2 not found)")
+endif()
+
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux" AND FRAMEWATCH_BUILD_LINUX_PRELOAD)
+    add_library(framewatch_preload SHARED
+        src/preload/framewatch_preload_linux.cpp)
+    target_compile_definitions(framewatch_preload PRIVATE _GNU_SOURCE)
+    target_compile_features(framewatch_preload PRIVATE cxx_std_20)
+    target_link_libraries(framewatch_preload PRIVATE dl)
+    set_target_properties(framewatch_preload PROPERTIES
+        PREFIX    "lib"
+        OUTPUT_NAME "framewatch_preload"
+        C_VISIBILITY_PRESET   default
+        CXX_VISIBILITY_PRESET default)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(framewatch_preload PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    message(STATUS "FrameWatch: Linux LD_PRELOAD Vulkan hook enabled")
+
+    add_executable(framewatch_preload_smoke src/app/preload_smoke_linux.cpp)
+    target_compile_features(framewatch_preload_smoke PRIVATE cxx_std_20)
+    target_link_libraries(framewatch_preload_smoke PRIVATE dl)
+    add_test(
+        NAME "Linux preload smoke"
+        COMMAND framewatch_preload_smoke
+            $<TARGET_FILE:framewatch_preload>)
+endif()
+
+if(FRAMEWATCH_BUILD_C_API)
+    add_library(framewatch_c_api SHARED src/c_api/framewatch_c.cpp)
+    target_link_libraries(framewatch_c_api PRIVATE framewatch_core)
+    target_include_directories(framewatch_c_api
+        PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+    target_compile_features(framewatch_c_api PRIVATE cxx_std_20)
+    set_target_properties(framewatch_c_api PROPERTIES
+        C_VISIBILITY_PRESET   default
+        CXX_VISIBILITY_PRESET default)
+    if(MSVC)
+        target_compile_options(framewatch_c_api PRIVATE /W4 /permissive-)
+    else()
+        target_compile_options(framewatch_c_api PRIVATE -Wall -Wextra -Wpedantic)
+    endif()
+    message(STATUS "FrameWatch: C API shared library enabled")
+endif()
+
 include(CTest)
 
 if(BUILD_TESTING AND FRAMEWATCH_BUILD_TESTS)
@@ -232,6 +296,9 @@ if(BUILD_TESTING AND FRAMEWATCH_BUILD_TESTS)
     if(TARGET Catch2::Catch2WithMain)
         add_executable(framewatch_tests tests/metrics_tests.cpp)
         target_link_libraries(framewatch_tests PRIVATE framewatch_core Catch2::Catch2WithMain)
+        if(TARGET framewatch_c_api)
+            target_link_libraries(framewatch_tests PRIVATE framewatch_c_api)
+        endif()
         target_compile_features(framewatch_tests PRIVATE cxx_std_20)
         include(Catch)
         catch_discover_tests(framewatch_tests)
