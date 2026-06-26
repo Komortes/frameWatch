@@ -16,7 +16,7 @@
  * with zero overhead (the socket fd is checked before every send).
  */
 
-#define _GNU_SOURCE  // RTLD_NEXT
+// _GNU_SOURCE injected by CMake target_compile_definitions (required for RTLD_NEXT)
 #include <dlfcn.h>
 #include <inttypes.h>
 #include <netinet/in.h>

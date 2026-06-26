@@ -11,6 +11,7 @@
 #include "debug_window/bitmap_font.h"
 #include "debug_window/renderer.h"
 #include "debug_window/types.h"
+#include "framewatch/gpu/gpu_metrics_sampler.h"
 #include "framewatch/ipc/ipc_server.h"
 #include "framewatch/session/performance_session.h"
 
@@ -111,6 +112,8 @@ int main() {
     // ── App state ─────────────────────────────────────────────────────────────
     framewatch::PerformanceSession session(360, 5000);
     framewatch::IpcServer          ipc;
+    framewatch::GpuMetricsSampler  gpu_sampler;
+    gpu_sampler.Start();
     ViewerState                    state = ViewerState::Waiting;
     bool                           was_connected = false;
     std::string                    status_msg    = "Waiting for game...";
@@ -226,8 +229,26 @@ int main() {
         DrawStatCard(renderer, kPad + (cardW + cardGap) * 3,     cardY, cardW, cardH,
                      "0.1% LOW", p01_str.c_str(),  snap.point_one_percent_low_fps > 40 ? green : kPal.warning);
 
+        // ── GPU row ───────────────────────────────────────────────────────────
+        const framewatch::GpuMetrics gpu = gpu_sampler.LastSample();
+        const int gpuRowY = cardY + cardH + 6;
+        if (gpu.available) {
+            const std::string load_s  = dw::FormatDouble(gpu.gpu_load_percent, 0) + "%";
+            const std::string temp_s  = dw::FormatDouble(gpu.gpu_temp_c, 0) + "\xB0""C";
+            const uint64_t vram_mb    = gpu.vram_used_bytes / (1024 * 1024);
+            const uint64_t vtotal_mb  = gpu.vram_total_bytes / (1024 * 1024);
+            const std::string vram_s  = std::to_string(vram_mb) + "/" +
+                                        std::to_string(vtotal_mb) + "MB";
+            std::string gpu_line = gpu.gpu_name + "  GPU:" + load_s +
+                                   "  TEMP:" + temp_s + "  VRAM:" + vram_s;
+            dw::DrawText(renderer, kPad, gpuRowY, 1, kPal.text_muted, gpu_line.c_str());
+        } else {
+            dw::DrawText(renderer, kPad, gpuRowY, 1, kPal.text_muted,
+                         (std::string("GPU: ") + gpu_sampler.ProviderName()).c_str());
+        }
+
         // ── Graph ─────────────────────────────────────────────────────────────
-        const int graphY = cardY + cardH + kPad;
+        const int graphY = cardY + cardH + 20;
         const int graphH = kWinH - graphY - kPad * 3 - 24;
         const SDL_Rect graph_rect{kPad, graphY, kWinW - kPad * 2, graphH};
         DrawGraph(renderer, graph_rect, gsnap, kTargetFtMs);
@@ -261,6 +282,7 @@ int main() {
         SDL_RenderPresent(renderer);
     }
 
+    gpu_sampler.Stop();
     ipc.Stop();
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);

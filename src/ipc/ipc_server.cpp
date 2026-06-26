@@ -205,7 +205,9 @@ void IpcServer::Stop() noexcept {
     // Wake the accept() call by writing to the self-pipe.
     if (wake_fds_[1] >= 0) {
         const char byte = 0;
-        (void)write(wake_fds_[1], &byte, 1);
+        // Best-effort one-byte wake; failure is harmless (thread checks running_).
+        ssize_t wake_result = write(wake_fds_[1], &byte, 1);
+        (void)wake_result;
     }
 
     if (thread_.joinable()) thread_.join();

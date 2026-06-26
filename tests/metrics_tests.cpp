@@ -3,8 +3,11 @@
 #include <filesystem>
 #include <fstream>
 #include <string_view>
+#include <thread>
 
 #include "framewatch/framewatch.h"
+#include "framewatch/gpu/gpu_metrics.h"
+#include "framewatch/gpu/gpu_metrics_sampler.h"
 #include "framewatch/core/frametime_tracker.h"
 #include "framewatch/core/metrics_engine.h"
 #include "framewatch/exporter/csv_exporter.h"
@@ -613,4 +616,48 @@ TEST_CASE("C API reset clears samples", "[capi]") {
     CHECK(fw_session_snapshot(s).sample_count == 0);
 
     fw_session_destroy(s);
+}
+
+// ---------------------------------------------------------------------------
+// GPU metrics
+// ---------------------------------------------------------------------------
+
+TEST_CASE("GPU factory returns non-null provider", "[gpu]") {
+    auto provider = framewatch::CreateGpuMetricsProvider();
+    REQUIRE(provider != nullptr);
+    CHECK(std::string(provider->ProviderName()).size() > 0);
+}
+
+TEST_CASE("GPU factory query does not throw", "[gpu]") {
+    auto provider = framewatch::CreateGpuMetricsProvider();
+    REQUIRE(provider != nullptr);
+    framewatch::GpuMetrics m;
+    REQUIRE_NOTHROW(m = provider->Query());
+    if (m.available) {
+        CHECK(m.gpu_load_percent >= 0.f);
+        CHECK(m.gpu_load_percent <= 100.f);
+        CHECK(m.gpu_temp_c >= 0.f);
+        CHECK(m.gpu_temp_c < 200.f);
+        CHECK(m.vram_total_bytes > 0);
+        CHECK(m.vram_used_bytes <= m.vram_total_bytes);
+        CHECK_FALSE(m.gpu_name.empty());
+    }
+}
+
+TEST_CASE("GpuMetricsSampler start/stop", "[gpu]") {
+    framewatch::GpuMetricsSampler sampler{std::chrono::milliseconds{50}};
+    CHECK_FALSE(sampler.IsRunning());
+    sampler.Start();
+    CHECK(sampler.IsRunning());
+    std::this_thread::sleep_for(std::chrono::milliseconds{120});
+    (void)sampler.LastSample();  // must not crash regardless of hardware
+    sampler.Stop();
+    CHECK_FALSE(sampler.IsRunning());
+}
+
+TEST_CASE("GpuMetricsSampler double stop is safe", "[gpu]") {
+    framewatch::GpuMetricsSampler sampler;
+    sampler.Start();
+    sampler.Stop();
+    REQUIRE_NOTHROW(sampler.Stop());
 }

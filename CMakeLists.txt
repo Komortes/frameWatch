@@ -14,6 +14,7 @@ option(FRAMEWATCH_SANITIZE_THREAD "Enable ThreadSanitizer (GCC/Clang only)" OFF)
 option(FRAMEWATCH_BUILD_VIEWER "Build the standalone IPC viewer (requires SDL2)" ON)
 option(FRAMEWATCH_BUILD_LINUX_PRELOAD "Build the Linux LD_PRELOAD Vulkan hook (Linux only)" ON)
 option(FRAMEWATCH_BUILD_C_API "Build the public C shared-library API (framewatch_c_api)" ON)
+option(FRAMEWATCH_BUILD_GPU_METRICS "Build GPU metrics plugins (NVML + sysfs)" ON)
 
 if(FRAMEWATCH_SANITIZE_ADDRESS AND FRAMEWATCH_SANITIZE_THREAD)
     message(FATAL_ERROR "FRAMEWATCH_SANITIZE_ADDRESS and FRAMEWATCH_SANITIZE_THREAD are mutually exclusive")
@@ -48,6 +49,11 @@ add_library(framewatch_core
     src/overlay/overlay_runtime.cpp
     src/overlay/overlay_renderer_stub.cpp
     src/ipc/ipc_server.cpp
+    src/gpu/null_gpu_provider.cpp
+    src/gpu/nvml_gpu_provider.cpp
+    src/gpu/sysfs_gpu_provider.cpp
+    src/gpu/gpu_metrics_factory.cpp
+    src/gpu/gpu_metrics_sampler.cpp
 )
 
 target_include_directories(framewatch_core
@@ -56,6 +62,10 @@ target_include_directories(framewatch_core
     PRIVATE
         ${CMAKE_CURRENT_SOURCE_DIR}/third_party
 )
+
+# Required so framewatch_core objects can be linked into shared libraries
+# (framewatch_c_api) on Linux/GCC without -fPIC relocation errors.
+set_target_properties(framewatch_core PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 target_compile_features(framewatch_core PUBLIC cxx_std_20)
 
@@ -136,6 +146,11 @@ if(APPLE)
     target_link_libraries(framewatch_core PRIVATE ${FRAMEWATCH_APPLICATION_SERVICES_FRAMEWORK})
 else()
     target_sources(framewatch_core PRIVATE src/platform/window_targeting_stub.cpp)
+endif()
+
+# dlopen is needed by NvmlGpuProvider on non-Windows platforms.
+if(NOT WIN32)
+    target_link_libraries(framewatch_core PRIVATE dl)
 endif()
 
 if(FRAMEWATCH_BUILD_DEMO)
@@ -268,8 +283,9 @@ if(FRAMEWATCH_BUILD_C_API)
         PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
     target_compile_features(framewatch_c_api PRIVATE cxx_std_20)
     set_target_properties(framewatch_c_api PROPERTIES
-        C_VISIBILITY_PRESET   default
-        CXX_VISIBILITY_PRESET default)
+        C_VISIBILITY_PRESET        default
+        CXX_VISIBILITY_PRESET      default
+        WINDOWS_EXPORT_ALL_SYMBOLS ON)
     if(MSVC)
         target_compile_options(framewatch_c_api PRIVATE /W4 /permissive-)
     else()
