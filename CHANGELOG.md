@@ -29,6 +29,15 @@ All notable changes to this project will be documented here.
 - README rewritten: platform table, Known Limitations section, accurate build instructions
 
 ### Added (M4)
+- GPU metrics plugins (`include/framewatch/gpu/`): `IGpuMetricsProvider` interface +
+  `CreateGpuMetricsProvider()` factory (NVML → sysfs → null chain); `NvmlGpuProvider`
+  loads `libnvidia-ml.so`/`nvml.dll` at runtime via dlopen/LoadLibrary — no link-time
+  NVML dependency, graceful fallback when absent; `SysfsGpuProvider` reads AMD/Intel
+  metrics from `/sys/class/drm/card0/device/` (load %, temp in millicelsius, VRAM
+  used/total); `GpuMetricsSampler` polls on a background thread (500 ms default),
+  thread-safe `LastSample()`; viewer shows GPU name, load %, temp, and VRAM bar;
+  `FRAMEWATCH_BUILD_GPU_METRICS` CMake option (ON by default); 4 new Catch2 tests
+  (26 total, all passing)
 - Standalone IPC viewer (`src/app/viewer_main.cpp`, `framewatch_viewer`): SDL2
   window (640×420) with three states — WAITING (no client), LIVE (streaming),
   DISCONNECTED (last stats); stat cards for avg FPS / avg FT / 1% low / 0.1%
