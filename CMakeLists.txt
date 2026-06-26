@@ -43,6 +43,7 @@ add_library(framewatch_core
     src/overlay/overlay_settings.cpp
     src/overlay/overlay_runtime.cpp
     src/overlay/overlay_renderer_stub.cpp
+    src/ipc/ipc_server.cpp
 )
 
 target_include_directories(framewatch_core

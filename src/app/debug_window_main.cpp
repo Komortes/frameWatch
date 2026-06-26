@@ -14,6 +14,7 @@
 #include <string_view>
 #include <thread>
 
+#include "framewatch/ipc/ipc_server.h"
 #include "framewatch/overlay/overlay_settings.h"
 #include "framewatch/platform/window_targeting.h"
 #include "framewatch/session/performance_session.h"
@@ -28,6 +29,7 @@ struct AppOptions {
     bool smoke_test{false};
     bool list_targets{false};
     bool follow_target{false};
+    bool ipc_enabled{true};
     std::string target_title;
     std::filesystem::path csv_path{"output/framewatch_debug_window.csv"};
     std::filesystem::path json_path{"output/framewatch_debug_window.json"};
@@ -52,6 +54,8 @@ AppOptions ParseArgs(int argc, char** argv) {
             options.json_path = argv[++i];
         } else if (arg == "--settings" && (i + 1) < argc) {
             options.settings_path = argv[++i];
+        } else if (arg == "--no-ipc") {
+            options.ipc_enabled = false;
         }
     }
     return options;
@@ -185,6 +189,15 @@ int RunWindow(const AppOptions& options) {
     benchmark.ResetSyntheticTimeline();
     SyntheticFrameGenerator generator;
     WindowState state;
+    framewatch::IpcServer ipc_server;
+    bool ipc_was_connected = false;
+    if (options.ipc_enabled) {
+        if (ipc_server.Start()) {
+            std::cout << "IPC: listening on " << framewatch::IpcServer::kEndpoint << '\n';
+        } else {
+            std::cerr << "IPC: failed to start (endpoint in use? try --no-ipc)\n";
+        }
+    }
     TargetingState targeting;
     targeting.follow_enabled = options.follow_target || overlay_settings.follow_target_window;
     targeting.title_query = !options.target_title.empty() ? options.target_title
@@ -624,7 +637,25 @@ int RunWindow(const AppOptions& options) {
         }
 
         const SteadyClock::time_point now = SteadyClock::now();
-        if (state.running && (now - state.last_step_at) >= std::chrono::milliseconds(16)) {
+
+        // IPC: drain real frametime data from connected client (e.g. injected DLL).
+        if (ipc_server.IsRunning()) {
+            const bool ipc_connected = ipc_server.HasClient();
+            if (ipc_connected && !ipc_was_connected) {
+                SetStatus(state, "IPC: CLIENT CONNECTED", std::chrono::seconds(3));
+                ipc_was_connected = true;
+            } else if (!ipc_connected && ipc_was_connected) {
+                SetStatus(state, "IPC: CLIENT DISCONNECTED", std::chrono::seconds(3));
+                ipc_was_connected = false;
+            }
+            for (const auto& s : ipc_server.DrainSamples()) {
+                benchmark.CaptureSyntheticFrame(s.frametime_ms);
+            }
+        }
+
+        // Fall back to synthetic frames when no IPC client is supplying real data.
+        if (!ipc_server.HasClient() && state.running &&
+            (now - state.last_step_at) >= std::chrono::milliseconds(16)) {
             benchmark.CaptureSyntheticFrame(generator.NextFrametimeMs());
             state.last_step_at = now;
         }

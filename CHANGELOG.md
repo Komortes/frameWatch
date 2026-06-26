@@ -44,6 +44,20 @@ All notable changes to this project will be documented here.
 - CI: added `sanitize-asan` (ASan + UBSan) and `sanitize-tsan` (TSan) jobs on Ubuntu;
   `FRAMEWATCH_SANITIZE_ADDRESS` and `FRAMEWATCH_SANITIZE_THREAD` CMake options for local use;
   all 15 tests pass clean under ASan+UBSan locally (LSan active on Linux CI only)
+- `IpcServer` (`include/framewatch/ipc/ipc_server.h`, `src/ipc/ipc_server.cpp`):
+  cross-platform named-pipe (Windows) / Unix-socket (macOS/Linux) server that receives
+  `FrameSample` data as newline-delimited JSON from a client (e.g. the injected DLL);
+  `DrainSamples()` is non-blocking and safe to call from the main loop; `HasClient()`
+  lets the debug window fall back to synthetic frames when no client is connected;
+  endpoint: `\\.\pipe\framewatch-live` (Windows) / `/tmp/framewatch-live.sock` (Unix).
+  Test with: `echo '{"frame":1,"ts":0.016,"ft_ms":16.666,"fps":60.0}' | nc -U /tmp/framewatch-live.sock`
+- `framewatch_debug_window`: IPC server starts automatically on launch; switches from
+  synthetic to real frametime data while a client is connected; `--no-ipc` flag disables it;
+  connection events shown as status messages ("IPC: CLIENT CONNECTED")
+- Release pipeline (`.github/workflows/release.yml`): triggered by `v*.*.*` tags; builds
+  and tests on Linux, macOS, Windows; packages `framewatch_demo` + `framewatch_debug_window`
+  (Unix) / injector + DLL (Windows) into tar.gz/zip; auto-generates release notes from git
+  log and creates a GitHub release with all three artifacts
 
 ### Added
 - Frame-budget alerts in the debug window: a header chip shows the share of recent frames

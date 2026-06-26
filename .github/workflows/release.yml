@@ -1,0 +1,158 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+permissions:
+  contents: write
+
+jobs:
+  build-linux:
+    name: Linux x86_64
+    runs-on: ubuntu-latest
+    env:
+      ARCHIVE: framewatch-${{ github.ref_name }}-linux-x86_64.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2
+        run: sudo apt-get update && sudo apt-get install -y libsdl2-dev
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DFRAMEWATCH_ENABLE_DX11_HOOK=OFF
+          -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/framewatch_demo dist/
+          cp build/framewatch_debug_window dist/ 2>/dev/null || true
+          cp LICENSE dist/
+          tar -czf "$ARCHIVE" -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-x86_64
+          path: ${{ env.ARCHIVE }}
+
+  build-macos:
+    name: macOS arm64 + x86_64
+    runs-on: macos-latest
+    env:
+      ARCHIVE: framewatch-${{ github.ref_name }}-macos.tar.gz
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2
+        run: brew install sdl2
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DFRAMEWATCH_ENABLE_DX11_HOOK=OFF
+          -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Test
+        run: ctest --test-dir build --output-on-failure
+
+      - name: Package
+        run: |
+          mkdir -p dist
+          cp build/framewatch_demo dist/
+          cp build/framewatch_debug_window dist/ 2>/dev/null || true
+          cp LICENSE dist/
+          tar -czf "$ARCHIVE" -C dist .
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos
+          path: ${{ env.ARCHIVE }}
+
+  build-windows:
+    name: Windows x64
+    runs-on: windows-latest
+    env:
+      ARCHIVE: framewatch-${{ github.ref_name }}-windows-x64.zip
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure
+        run: >
+          cmake -S . -B build
+          -DCMAKE_BUILD_TYPE=Release
+          -DFRAMEWATCH_ENABLE_DX11_HOOK=ON
+          -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=ON
+          -DFRAMEWATCH_ENABLE_MINHOOK=OFF
+
+      - name: Build
+        run: cmake --build build --config Release --parallel
+
+      - name: Test
+        run: ctest --test-dir build -C Release --output-on-failure
+
+      - name: Package
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist
+          Copy-Item build\Release\framewatch_demo.exe dist\
+          if (Test-Path build\Release\framewatch_injector.exe) {
+            Copy-Item build\Release\framewatch_injector.exe dist\
+          }
+          if (Test-Path build\Release\framewatch_dx11_overlay.dll) {
+            Copy-Item build\Release\framewatch_dx11_overlay.dll dist\
+          }
+          Copy-Item LICENSE dist\
+          Compress-Archive -Path dist\* -DestinationPath "$env:ARCHIVE"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-x64
+          path: ${{ env.ARCHIVE }}
+
+  publish:
+    name: Publish GitHub Release
+    needs: [build-linux, build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Generate release notes
+        run: |
+          PREV=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          git log --pretty=format:'- %s' "$PREV"..HEAD > notes.txt
+          if [ ! -s notes.txt ]; then
+            echo 'See CHANGELOG.md for details.' > notes.txt
+          fi
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          gh release create "$TAG" \
+            --title "FrameWatch $TAG" \
+            --notes-file notes.txt \
+            artifacts/linux-x86_64/*.tar.gz \
+            artifacts/macos/*.tar.gz \
+            artifacts/windows-x64/*.zip

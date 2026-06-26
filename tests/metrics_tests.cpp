@@ -235,12 +235,14 @@ TEST_CASE("CSV and JSON exporter round-trip", "[exporter]") {
     REQUIRE(framewatch::ExportSamplesToJson(samples, json_path));
     REQUIRE(std::filesystem::exists(json_path));
 
-    std::ifstream csv_file(csv_path);
-    REQUIRE(csv_file.is_open());
-    std::string line;
-    int line_count = 0;
-    while (std::getline(csv_file, line)) { ++line_count; }
-    CHECK(line_count == 6);  // 1 header + 5 data rows
+    {
+        std::ifstream csv_file(csv_path);
+        REQUIRE(csv_file.is_open());
+        std::string line;
+        int line_count = 0;
+        while (std::getline(csv_file, line)) { ++line_count; }
+        CHECK(line_count == 6);  // 1 header + 5 data rows
+    }  // csv_file closed here before remove (required on Windows)
 
     std::filesystem::remove(csv_path);
     std::filesystem::remove(json_path);
