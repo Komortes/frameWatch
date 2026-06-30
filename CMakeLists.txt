@@ -3,6 +3,7 @@ cmake_minimum_required(VERSION 3.21)
 project(FrameWatchMini VERSION 0.1.0 LANGUAGES CXX)
 
 option(FRAMEWATCH_ENABLE_DX11_HOOK "Build the DX11 hook scaffold on Windows" ON)
+option(FRAMEWATCH_ENABLE_DX12_HOOK "Build the DX12 IDXGISwapChain::Present hook scaffold on Windows" ON)
 option(FRAMEWATCH_ENABLE_VULKAN_HOOK "Build the Vulkan vkQueuePresentKHR hook scaffold on Windows" ON)
 option(FRAMEWATCH_ENABLE_MINHOOK "Enable MinHook-backed Present detouring when MinHook is available" ON)
 option(FRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP "Build the injected DX11 overlay DLL and injector on Windows" ON)
@@ -130,6 +131,19 @@ if(WIN32 AND FRAMEWATCH_ENABLE_DX11_HOOK)
             message(STATUS "FrameWatch: MinHook not found, DX11 Present detour stays disabled")
         endif()
     endif()
+endif()
+
+if(WIN32 AND FRAMEWATCH_ENABLE_DX12_HOOK)
+    target_sources(framewatch_core PRIVATE
+        src/hooks/dx12/dx12_present_hook_win.cpp)
+    target_compile_definitions(framewatch_core PRIVATE FRAMEWATCH_HAS_DX12_HOOK=1)
+    target_link_libraries(framewatch_core PUBLIC d3d12)
+    message(STATUS "FrameWatch: DX12 hook scaffold enabled")
+
+    add_executable(framewatch_dx12_hook_smoke src/app/dx12_hook_smoke_win.cpp)
+    target_link_libraries(framewatch_dx12_hook_smoke PRIVATE framewatch_core d3d12 dxgi)
+    target_compile_features(framewatch_dx12_hook_smoke PRIVATE cxx_std_20)
+    add_test(NAME "DX12 hook smoke" COMMAND framewatch_dx12_hook_smoke)
 endif()
 
 if(WIN32 AND FRAMEWATCH_ENABLE_VULKAN_HOOK)

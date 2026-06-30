@@ -11,6 +11,9 @@
 CMakeUserPresets.json
 compile_commands.json
 
+# Clangd / LSP caches
+.cache/
+
 # IDEs and editors
 /.idea/
 /.vscode/

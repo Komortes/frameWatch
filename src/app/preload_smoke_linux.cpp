@@ -3,6 +3,20 @@
 #include <dlfcn.h>
 #include <iostream>
 
+namespace {
+
+bool check_symbol(void* lib, const char* name) {
+    void* sym = dlsym(lib, name);
+    if (!sym) {
+        std::cerr << "symbol " << name << " not found: " << dlerror() << '\n';
+        return false;
+    }
+    std::cout << "preload smoke: " << name << " @ " << sym << '\n';
+    return true;
+}
+
+}  // namespace
+
 int main(int argc, char* argv[]) {
     if (argc < 2) {
         std::cerr << "usage: framewatch_preload_smoke <path/to/libframewatch_preload.so>\n";
@@ -15,16 +29,15 @@ int main(int argc, char* argv[]) {
         return EXIT_FAILURE;
     }
 
-    // Verify the hook symbol is exported.
-    void* sym = dlsym(lib, "vkQueuePresentKHR");
-    if (!sym) {
-        std::cerr << "symbol vkQueuePresentKHR not found: " << dlerror() << '\n';
-        dlclose(lib);
-        return EXIT_FAILURE;
-    }
+    bool ok = true;
+    ok &= check_symbol(lib, "vkQueuePresentKHR");
+    ok &= check_symbol(lib, "eglSwapBuffers");
+    ok &= check_symbol(lib, "glXSwapBuffers");
 
-    std::cout << "preload smoke: vkQueuePresentKHR found at " << sym << '\n';
     dlclose(lib);
+    if (!ok) return EXIT_FAILURE;
+
+    std::cout << "preload smoke PASSED\n";
     return EXIT_SUCCESS;
 }
 

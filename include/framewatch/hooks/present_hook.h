@@ -11,6 +11,7 @@ namespace framewatch {
 enum class HookBackend {
     None,
     Dx11,
+    Dx12,
     Vulkan,
 };
 

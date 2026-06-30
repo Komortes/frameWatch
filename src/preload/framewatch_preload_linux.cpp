@@ -53,10 +53,25 @@ struct VkPresentInfoKHR {
 
 using PFN_vkQueuePresentKHR = VkResult (*)(VkQueue, const VkPresentInfoKHR*);
 
+// ── Minimal EGL / GLX ABI (opaque pointers — no SDK needed) ──────────────────
+
+// EGL: opaque handles per the EGL 1.5 ABI (void* is ABI-stable).
+typedef void*        EGLDisplay;
+typedef void*        EGLSurface;
+#define EGL_TRUE     1u
+using PFN_eglSwapBuffers = unsigned int (*)(EGLDisplay, EGLSurface);
+
+// GLX: Display is an Xlib opaque struct; GLXDrawable is XID (unsigned long).
+typedef void*        XlibDisplay;
+typedef unsigned long GLXDrawable;
+using PFN_glXSwapBuffers = void (*)(XlibDisplay*, GLXDrawable);
+
 // ── Internal state ────────────────────────────────────────────────────────────
 
-static PFN_vkQueuePresentKHR g_real_present = nullptr;
-static int                   g_ipc_fd       = -1;
+static PFN_vkQueuePresentKHR g_real_present  = nullptr;
+static PFN_eglSwapBuffers    g_real_egl_swap = nullptr;
+static PFN_glXSwapBuffers    g_real_glx_swap = nullptr;
+static int                   g_ipc_fd        = -1;
 static std::atomic<uint64_t> g_frame_index{0};
 
 // Protects g_ipc_fd and g_last_ts from concurrent present calls.
@@ -90,8 +105,12 @@ static void ipc_connect() noexcept {
 
 __attribute__((constructor))
 static void fw_preload_init() noexcept {
-    g_real_present = reinterpret_cast<PFN_vkQueuePresentKHR>(
+    g_real_present  = reinterpret_cast<PFN_vkQueuePresentKHR>(
         dlsym(RTLD_NEXT, "vkQueuePresentKHR"));
+    g_real_egl_swap = reinterpret_cast<PFN_eglSwapBuffers>(
+        dlsym(RTLD_NEXT, "eglSwapBuffers"));
+    g_real_glx_swap = reinterpret_cast<PFN_glXSwapBuffers>(
+        dlsym(RTLD_NEXT, "glXSwapBuffers"));
     ipc_connect();
 }
 
@@ -103,36 +122,53 @@ static void fw_preload_fini() noexcept {
     }
 }
 
-// ── Hook ──────────────────────────────────────────────────────────────────────
+// ── Shared frame-timing + IPC logic ──────────────────────────────────────────
 
-extern "C" VkResult vkQueuePresentKHR(VkQueue              queue,
-                                       const VkPresentInfoKHR* pInfo) {
-    const uint64_t frame = ++g_frame_index;
+static void record_frame() noexcept {
+    const uint64_t frame = g_frame_index.load(std::memory_order_relaxed);
     const double   now   = mono_time_sec();
 
-    {
-        std::lock_guard<std::mutex> lock(g_mutex);
+    std::lock_guard<std::mutex> lock(g_mutex);
 
-        if (g_ipc_fd >= 0 && g_last_ts > 0.0) {
-            const double ft_ms = (now - g_last_ts) * 1000.0;
-            const double fps   = (ft_ms > 0.0) ? 1000.0 / ft_ms : 0.0;
+    if (g_ipc_fd >= 0 && g_last_ts > 0.0) {
+        const double ft_ms = (now - g_last_ts) * 1000.0;
+        const double fps   = (ft_ms > 0.0) ? 1000.0 / ft_ms : 0.0;
 
-            char buf[128];
-            int n = snprintf(buf, sizeof(buf),
-                "{\"frame\":%" PRIu64 ",\"ts\":%.6f,\"ft_ms\":%.4f,\"fps\":%.3f}\n",
-                frame, now, ft_ms, fps);
+        char buf[128];
+        int n = snprintf(buf, sizeof(buf),
+            "{\"frame\":%" PRIu64 ",\"ts\":%.6f,\"ft_ms\":%.4f,\"fps\":%.3f}\n",
+            frame, now, ft_ms, fps);
 
-            if (n > 0 && n < static_cast<int>(sizeof(buf))) {
-                if (write(g_ipc_fd, buf, static_cast<size_t>(n)) < 0) {
-                    close(g_ipc_fd);
-                    g_ipc_fd = -1;
-                }
+        if (n > 0 && n < static_cast<int>(sizeof(buf))) {
+            if (write(g_ipc_fd, buf, static_cast<size_t>(n)) < 0) {
+                close(g_ipc_fd);
+                g_ipc_fd = -1;
             }
         }
-
-        g_last_ts = now;
     }
 
+    g_last_ts = now;
+}
+
+// ── Hooks ─────────────────────────────────────────────────────────────────────
+
+extern "C" VkResult vkQueuePresentKHR(VkQueue                 queue,
+                                       const VkPresentInfoKHR* pInfo) {
+    ++g_frame_index;
+    record_frame();
     if (g_real_present) return g_real_present(queue, pInfo);
     return VK_SUCCESS;
+}
+
+extern "C" unsigned int eglSwapBuffers(EGLDisplay dpy, EGLSurface surf) {
+    ++g_frame_index;
+    record_frame();
+    if (g_real_egl_swap) return g_real_egl_swap(dpy, surf);
+    return EGL_TRUE;
+}
+
+extern "C" void glXSwapBuffers(XlibDisplay* dpy, GLXDrawable drawable) {
+    ++g_frame_index;
+    record_frame();
+    if (g_real_glx_swap) g_real_glx_swap(dpy, drawable);
 }

@@ -9,6 +9,7 @@ namespace framewatch {
 enum class GraphicsApi {
     Unknown,
     Dx11,
+    Dx12,
     Vulkan,
 };
 
