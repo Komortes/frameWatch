@@ -120,18 +120,23 @@ jobs:
         run: ctest --test-dir build --output-on-failure -R "Linux preload"
 
   build-windows:
-    name: Windows (MSVC, DX11 hook)
+    name: Windows (MSVC, DX11 + DX12 hook, MinHook)
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+
+      - name: Install MinHook via vcpkg
+        run: C:/vcpkg/vcpkg.exe install minhook:x64-windows
 
       - name: Configure
         run: >
           cmake -S . -B build
           -DCMAKE_BUILD_TYPE=Release
+          -DFRAMEWATCH_MINHOOK_ROOT=C:/vcpkg/installed/x64-windows
           -DFRAMEWATCH_ENABLE_DX11_HOOK=ON
+          -DFRAMEWATCH_ENABLE_DX12_HOOK=ON
           -DFRAMEWATCH_BUILD_WINDOWS_BOOTSTRAP=ON
-          -DFRAMEWATCH_ENABLE_MINHOOK=OFF
+          -DFRAMEWATCH_ENABLE_MINHOOK=ON
 
       - name: Build
         run: cmake --build build --config Release --parallel

@@ -67,7 +67,13 @@ std::optional<FrameSample> PerformanceSession::CaptureFrame(FrameClock::time_poi
 
 std::optional<FrameSample> PerformanceSession::CaptureSyntheticFrame(double frametime_ms) {
     if (!synthetic_timeline_ready_) {
-        ResetSyntheticTimeline();
+        // Lazy-initialize the synthetic clock WITHOUT calling Reset() — callers
+        // may already have a benchmark in progress (e.g. StartBenchmark before
+        // the first push_frame).  Seed the tracker so the very next CaptureFrame
+        // can compute a delta; a full Reset() would clear benchmark_recording_.
+        synthetic_timestamp_      = FrameClock::now();
+        synthetic_timeline_ready_ = true;
+        live_tracker_.Capture(synthetic_timestamp_);
     }
 
     synthetic_timestamp_ += std::chrono::microseconds(

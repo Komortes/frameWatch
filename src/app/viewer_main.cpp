@@ -41,6 +41,19 @@ void DrawStatCard(SDL_Renderer* r, int x, int y, int w, int h,
     dw::DrawText(r, x + 8, y + 20, 2, value_color,         value);
 }
 
+// Horizontal progress bar — bg then filled portion.
+void DrawBar(SDL_Renderer* r, int x, int y, int w, int h,
+             float fraction, SDL_Color fill) {
+    static constexpr SDL_Color kBg{55, 65, 81, 180};
+    const SDL_Rect bg_rect{x, y, w, h};
+    dw::FillRect(r, bg_rect, kBg);
+    const int fill_w = static_cast<int>(std::clamp(fraction, 0.f, 1.f) * w);
+    if (fill_w > 0) {
+        const SDL_Rect fill_rect{x, y, fill_w, h};
+        dw::FillRect(r, fill_rect, fill);
+    }
+}
+
 void DrawGraph(SDL_Renderer* r, const SDL_Rect& rect,
                const framewatch::OverlaySnapshot& snap,
                double target_ft_ms) {
@@ -52,20 +65,48 @@ void DrawGraph(SDL_Renderer* r, const SDL_Rect& rect,
     const double lo = snap.graph_min_ms;
     const double hi = std::max(snap.graph_max_ms, target_ft_ms * 1.5);
     const double range = (hi > lo) ? (hi - lo) : 1.0;
-
-    const int n = static_cast<int>(snap.graph.size());
+    const int    n    = static_cast<int>(snap.graph.size());
 
     auto mapY = [&](double ft_ms) -> int {
         double t = 1.0 - std::clamp((ft_ms - lo) / range, 0.0, 1.0);
         return rect.y + static_cast<int>(t * (rect.h - 2)) + 1;
     };
 
-    // budget reference line
+    SDL_SetRenderDrawBlendMode(r, SDL_BLENDMODE_BLEND);
+
+    // ── FPS reference grid lines (120 / 60 / 30 fps) ─────────────────────────
+    struct RefLine { double ft_ms; const char* label; };
+    static constexpr RefLine kRefs[] = {
+        { 8.333, "120"},
+        {16.667, " 60"},
+        {33.333, " 30"},
+    };
+    for (const auto& ref : kRefs) {
+        const int gy = mapY(ref.ft_ms);
+        if (gy <= rect.y || gy >= rect.y + rect.h) continue;
+        SDL_SetRenderDrawColor(r, kPal.grid.r, kPal.grid.g, kPal.grid.b, 80);
+        SDL_RenderDrawLine(r, rect.x + 1, gy, rect.x + rect.w - 2, gy);
+        dw::DrawText(r, rect.x + rect.w - 22, gy - 7, 1, kPal.grid, ref.label);
+    }
+
+    // ── Budget reference line ─────────────────────────────────────────────────
     const int budget_y = mapY(target_ft_ms);
     SDL_SetRenderDrawColor(r, kPal.accent.r, kPal.accent.g, kPal.accent.b, 80);
     SDL_RenderDrawLine(r, rect.x + 1, budget_y, rect.x + rect.w - 2, budget_y);
 
-    // frametime polyline
+    // ── Filled area under curve ───────────────────────────────────────────────
+    const int bottom = rect.y + rect.h - 1;
+    for (int i = 0; i < n; ++i) {
+        const double ft    = snap.graph[i].frametime_ms;
+        const int    gx    = rect.x + 1 + i * (rect.w - 2) / std::max(n - 1, 1);
+        const int    gy    = mapY(ft);
+        const bool   spike = ft > target_ft_ms * 1.5;
+        SDL_Color fc = spike ? kPal.danger : kPal.accent_2;
+        SDL_SetRenderDrawColor(r, fc.r, fc.g, fc.b, 28);
+        SDL_RenderDrawLine(r, gx, gy, gx, bottom);
+    }
+
+    // ── Frametime polyline ────────────────────────────────────────────────────
     for (int i = 1; i < n; ++i) {
         const double ft_prev = snap.graph[i - 1].frametime_ms;
         const double ft_curr = snap.graph[i].frametime_ms;
@@ -185,10 +226,19 @@ int main() {
         const auto gsnap   = session.GraphSnapshot();
         const auto now     = dw::SteadyClock::now();
 
-        // ── Header ────────────────────────────────────────────────────────────
-        dw::DrawText(renderer, kPad, kPad, 2, kPal.text_primary, "FRAMEWATCH");
+        // ── Window title (live FPS) ───────────────────────────────────────────
+        {
+            std::string title = "FrameWatch";
+            if (snap.sample_count > 0) {
+                title += "  \xe2\x80\x94  " + dw::FormatDouble(snap.current_fps, 1) + " fps";
+            }
+            SDL_SetWindowTitle(window, title.c_str());
+        }
 
-        // State indicator
+        // ── Header ────────────────────────────────────────────────────────────
+        dw::DrawText(renderer, kPad, kPad + 2, 2, kPal.text_primary, "FRAMEWATCH");
+
+        // State indicator (small, top-right)
         const char* state_str  = "WAITING";
         SDL_Color   state_col  = kPal.text_muted;
         if (state == ViewerState::Live) {
@@ -198,8 +248,18 @@ int main() {
             state_str = "DISCONNECTED";
             state_col = kPal.warning;
         }
-        dw::DrawText(renderer, kWinW - kPad - static_cast<int>(strlen(state_str)) * 12,
-                     kPad + 4, 2, state_col, state_str);
+        dw::DrawText(renderer, kWinW - kPad - static_cast<int>(strlen(state_str)) * 6,
+                     kPad + 6, 1, state_col, state_str);
+
+        // Live FPS — large number, top-right area below state
+        if (snap.sample_count > 0) {
+            const std::string fps_live = dw::FormatDouble(snap.current_fps, 0);
+            const int fw = static_cast<int>(fps_live.size()) * 18; // scale=3, 6*3 per char
+            const SDL_Color fps_col = snap.current_fps >= kTargetFps * 0.97
+                                          ? kPal.accent : kPal.warning;
+            dw::DrawText(renderer, kWinW - kPad - fw, kPad - 2, 3, fps_col, fps_live.c_str());
+            dw::DrawText(renderer, kWinW - kPad - fw - 24, kPad + 18, 1, kPal.text_muted, "fps");
+        }
 
         // Divider
         SDL_SetRenderDrawColor(renderer, kPal.panel_border.r, kPal.panel_border.g,
@@ -230,25 +290,42 @@ int main() {
                      "0.1% LOW", p01_str.c_str(),  snap.point_one_percent_low_fps > 40 ? green : kPal.warning);
 
         // ── GPU row ───────────────────────────────────────────────────────────
-        const framewatch::GpuMetrics gpu = gpu_sampler.LastSample();
-        const int gpuRowY = cardY + cardH + 6;
+        const framewatch::GpuMetrics gpu     = gpu_sampler.LastSample();
+        const int                    gpuRowY = cardY + cardH + 6;
+
         if (gpu.available) {
-            const std::string load_s  = dw::FormatDouble(gpu.gpu_load_percent, 0) + "%";
-            const std::string temp_s  = dw::FormatDouble(gpu.gpu_temp_c, 0) + "\xB0""C";
-            const uint64_t vram_mb    = gpu.vram_used_bytes / (1024 * 1024);
-            const uint64_t vtotal_mb  = gpu.vram_total_bytes / (1024 * 1024);
-            const std::string vram_s  = std::to_string(vram_mb) + "/" +
-                                        std::to_string(vtotal_mb) + "MB";
-            std::string gpu_line = gpu.gpu_name + "  GPU:" + load_s +
-                                   "  TEMP:" + temp_s + "  VRAM:" + vram_s;
+            const std::string load_s = dw::FormatDouble(gpu.gpu_load_percent, 0) + "%";
+            const std::string temp_s = dw::FormatDouble(gpu.gpu_temp_c, 0) + "\xB0""C";
+            const uint64_t vram_mb   = gpu.vram_used_bytes  / (1024 * 1024);
+            const uint64_t vtot_mb   = gpu.vram_total_bytes / (1024 * 1024);
+            const std::string vram_s = std::to_string(vram_mb) + "/" +
+                                       std::to_string(vtot_mb) + "MB";
+
+            // Text line: name + load + temp + vram
+            const std::string gpu_line = gpu.gpu_name + "  GPU:" + load_s +
+                                         "  TEMP:" + temp_s + "  VRAM:" + vram_s;
             dw::DrawText(renderer, kPad, gpuRowY, 1, kPal.text_muted, gpu_line.c_str());
+
+            // GPU load bar
+            const SDL_Color load_col = gpu.gpu_load_percent < 70.f ? kPal.accent
+                                     : gpu.gpu_load_percent < 90.f ? kPal.warning
+                                     :                               kPal.danger;
+            DrawBar(renderer, kPad, gpuRowY + 12, 180, 5,
+                    gpu.gpu_load_percent / 100.f, load_col);
+
+            // VRAM bar
+            const float vram_frac = vtot_mb > 0
+                                        ? static_cast<float>(vram_mb) / vtot_mb
+                                        : 0.f;
+            DrawBar(renderer, kPad + 188, gpuRowY + 12, 120, 5,
+                    vram_frac, kPal.accent_2);
         } else {
             dw::DrawText(renderer, kPad, gpuRowY, 1, kPal.text_muted,
                          (std::string("GPU: ") + gpu_sampler.ProviderName()).c_str());
         }
 
         // ── Graph ─────────────────────────────────────────────────────────────
-        const int graphY = cardY + cardH + 20;
+        const int graphY = cardY + cardH + 32;   // +12 extra for GPU bars
         const int graphH = kWinH - graphY - kPad * 3 - 24;
         const SDL_Rect graph_rect{kPad, graphY, kWinW - kPad * 2, graphH};
         DrawGraph(renderer, graph_rect, gsnap, kTargetFtMs);
